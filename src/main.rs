@@ -4,15 +4,15 @@ use std::{
     process::Command,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Parser, Debug)]
-#[command(name = "susmos")]
-#[command(about = "Process-based multi-agent orchestration")]
+#[command(name = "opensus")]
+#[command(about = "Automatic pentest report swarm orchestrator")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -28,8 +28,14 @@ enum Commands {
         #[arg(required = true)]
         task: Vec<String>,
     },
-    /// Initialize the local filesystem scaffold.
+    /// Initialize workspace files for an opensus mission.
     Init,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Susfile {
+    api: String,
+    model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,16 +66,7 @@ impl std::fmt::Display for AgentStatus {
 }
 
 trait Tool {
-    fn name(&self) -> &str;
-    fn spec(&self) -> ToolSpec;
     fn call(&self, args: Value) -> Result<String>;
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ToolSpec {
-    name: String,
-    description: String,
-    parameters: Value,
 }
 
 struct SpawnAgentTool {
@@ -77,25 +74,6 @@ struct SpawnAgentTool {
 }
 
 impl Tool for SpawnAgentTool {
-    fn name(&self) -> &str {
-        "spawn_agent"
-    }
-
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: self.name().to_string(),
-            description: "Spawn a new LLM agent process".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" },
-                    "task": { "type": "string" }
-                },
-                "required": ["name", "task"]
-            }),
-        }
-    }
-
     fn call(&self, args: Value) -> Result<String> {
         let name = args
             .get("name")
@@ -109,7 +87,7 @@ impl Tool for SpawnAgentTool {
         let id = Uuid::new_v4().to_string();
         update_swarm_spawn(&self.root, &id, name, task)?;
 
-        let binary = env::current_exe().unwrap_or_else(|_| PathBuf::from("susmos"));
+        let binary = env::current_exe().unwrap_or_else(|_| PathBuf::from("opensus"));
         let status = Command::new(binary)
             .current_dir(&self.root)
             .arg("agent")
@@ -139,6 +117,7 @@ fn main() -> Result<()> {
 
 fn handle_go(root: &Path) -> Result<()> {
     ensure_layout(root)?;
+    let cfg = load_susfile(root)?;
     let mission = read_state_status(root)?;
     if mission.eq_ignore_ascii_case("complete") {
         println!("Mission already complete.");
@@ -149,8 +128,10 @@ fn handle_go(root: &Path) -> Result<()> {
     let swarm = load_swarm(root)?;
 
     let main_task = format!(
-        "Mission objective:\n{objective}\n\nCurrent swarm entries: {}\n\nIf work remains, use spawn_agent for workers and mark mission complete when done.",
-        swarm.len()
+        "Model: {}\nPentest objective:\n{}\n\nCurrent swarm entries: {}\n\nCoordinate intel -> exploit -> reporter and mark mission complete when report is done.",
+        cfg.model,
+        objective,
+        swarm.len(),
     );
 
     handle_agent(root, "main", &main_task)
@@ -158,11 +139,14 @@ fn handle_go(root: &Path) -> Result<()> {
 
 fn handle_agent(root: &Path, name: &str, task: &str) -> Result<()> {
     ensure_layout(root)?;
+    let cfg = load_susfile(root)?;
+
     let prompt_path = root.join("prompts").join(format!("{name}.md"));
     let prompt = fs::read_to_string(&prompt_path)
         .with_context(|| format!("failed to read prompt file: {}", prompt_path.display()))?;
 
     println!("=== Running agent: {name} ===");
+    println!("Model: {} (api: {})", cfg.model, cfg.api);
     println!("Task: {task}");
     println!("Prompt loaded from {}", prompt_path.display());
 
@@ -186,45 +170,56 @@ fn run_main_orchestration(root: &Path, _prompt: &str, task: &str) -> Result<()> 
     let objective = read_mission_objective(root)?;
     let swarm = load_swarm(root)?;
 
-    let has_running = swarm
+    if swarm
         .iter()
-        .any(|entry| matches!(entry.status, AgentStatus::Running));
-    if has_running {
+        .any(|entry| matches!(entry.status, AgentStatus::Running))
+    {
         println!("Main agent: workers already running; waiting for next heartbeat.");
         return Ok(());
     }
 
-    let has_coder = swarm
+    let intel_done = swarm
         .iter()
-        .any(|entry| entry.agent == "coder" && matches!(entry.status, AgentStatus::Complete));
-    let has_reviewer = swarm
+        .any(|entry| entry.agent == "intel" && matches!(entry.status, AgentStatus::Complete));
+    let exploit_done = swarm
         .iter()
-        .any(|entry| entry.agent == "reviewer" && matches!(entry.status, AgentStatus::Complete));
+        .any(|entry| entry.agent == "exploit" && matches!(entry.status, AgentStatus::Complete));
+    let reporter_done = swarm
+        .iter()
+        .any(|entry| entry.agent == "reporter" && matches!(entry.status, AgentStatus::Complete));
 
     let spawn_tool = SpawnAgentTool {
         root: root.to_path_buf(),
     };
-    let _tool_spec = spawn_tool.spec();
 
-    if !has_coder {
+    if !intel_done {
         spawn_tool.call(serde_json::json!({
-            "name": "coder",
-            "task": format!("Implement mission objective: {objective}")
+            "name": "intel",
+            "task": format!("Perform recon and collect findings for: {objective}")
         }))?;
-        println!("Main agent: spawned coder.");
+        println!("Main agent: spawned intel.");
         return Ok(());
     }
 
-    if !has_reviewer {
+    if !exploit_done {
         spawn_tool.call(serde_json::json!({
-            "name": "reviewer",
-            "task": "Review coder changes and run tests"
+            "name": "exploit",
+            "task": "Attempt validated exploitation paths from intel findings"
         }))?;
-        println!("Main agent: spawned reviewer.");
+        println!("Main agent: spawned exploit.");
         return Ok(());
     }
 
-    if task.contains("mark mission complete") || (has_coder && has_reviewer) {
+    if !reporter_done {
+        spawn_tool.call(serde_json::json!({
+            "name": "reporter",
+            "task": "Generate final automatic pentest report with evidence and remediation"
+        }))?;
+        println!("Main agent: spawned reporter.");
+        return Ok(());
+    }
+
+    if task.contains("mark mission complete") || (intel_done && exploit_done && reporter_done) {
         write_state_status(root, "complete")?;
         println!("Main agent: mission marked complete.");
     }
@@ -241,39 +236,35 @@ fn run_worker_agent(root: &Path, name: &str, _prompt: &str, task: &str) -> Resul
 
 fn ensure_layout(root: &Path) -> Result<()> {
     fs::create_dir_all(root.join("prompts")).context("failed to create prompts/ directory")?;
-    fs::create_dir_all(root.join(".susmos")).context("failed to create .susmos/ directory")?;
 
     write_if_missing(
         &root.join("prompts/main.md"),
-        "# Main Agent\n\nYou are the orchestrator. Read state.md and swarm.md, then use spawn_agent(name, task) when work remains.\n",
+        "# Main Agent\n\nYou are the pentest orchestrator. Read state.md and swarm.md, spawn intel/exploit/reporter as needed, then mark mission complete when the report is finalized.\n",
     )?;
     write_if_missing(
-        &root.join("prompts/coder.md"),
-        "# Coder Agent\n\nImplement requested task safely and report completion.\n",
+        &root.join("prompts/intel.md"),
+        "# Intel Agent\n\nCollect reconnaissance data, map attack surface, and output actionable findings.\n",
     )?;
     write_if_missing(
-        &root.join("prompts/reviewer.md"),
-        "# Reviewer Agent\n\nReview worker outputs and confirm quality and tests.\n",
+        &root.join("prompts/exploit.md"),
+        "# Exploit Agent\n\nValidate exploitable weaknesses safely and collect evidence.\n",
+    )?;
+    write_if_missing(
+        &root.join("prompts/reporter.md"),
+        "# Reporter Agent\n\nProduce a clear pentest report with severity, evidence, and remediation guidance.\n",
     )?;
     write_if_missing(&root.join("prompts/swarm.md"), "# Swarm Status\n\n")?;
     write_if_missing(
         &root.join("state.md"),
-        "# Mission\n\nDefine your mission objective here.\n\n## Status\nincomplete\n",
+        "# Mission\n\nGenerate an automatic pentest report for the target scope.\n\n## Status\nincomplete\n",
     )?;
     write_if_missing(
-        &root.join("assignment.txt"),
-        "Describe the high-level assignment for this mission.\n",
-    )?;
-    write_if_missing(&root.join("input.txt"), "Input context for agents.\n")?;
-    write_if_missing(
-        &root.join(".susmos/config.json"),
-        "{\n  \"provider\": \"mock\"\n}\n",
+        &root.join("susfile"),
+        "{\n  \"api\": \"openai\",\n  \"model\": \"gpt-4.1\"\n}\n",
     )?;
 
-    // Ensure swarm file is always generated from current entries.
     let entries = load_swarm(root)?;
     write_swarm(root, &entries)?;
-
     Ok(())
 }
 
@@ -285,11 +276,27 @@ fn write_if_missing(path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
+fn load_susfile(root: &Path) -> Result<Susfile> {
+    let path = root.join("susfile");
+    let content = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read susfile in {}", root.display()))?;
+    let cfg: Susfile = serde_json::from_str(&content).context("susfile must be valid JSON")?;
+    if cfg.api.to_lowercase() != "openai" {
+        bail!(
+            "unsupported api `{}` in susfile; only `openai` is supported",
+            cfg.api
+        );
+    }
+    if cfg.model.trim().is_empty() {
+        bail!("susfile.model must not be empty");
+    }
+    Ok(cfg)
+}
+
 fn read_mission_objective(root: &Path) -> Result<String> {
     let content = fs::read_to_string(root.join("state.md")).context("failed to read state.md")?;
-    let mut lines = content.lines();
     let mut objective_lines = Vec::new();
-    while let Some(line) = lines.next() {
+    for line in content.lines() {
         if line.trim_start().starts_with("## Status") {
             break;
         }
@@ -297,7 +304,6 @@ fn read_mission_objective(root: &Path) -> Result<String> {
             objective_lines.push(line);
         }
     }
-
     Ok(objective_lines.join("\n").trim().to_string())
 }
 
@@ -349,8 +355,7 @@ fn write_state_status(root: &Path, status: &str) -> Result<()> {
         result.push(status.to_string());
     }
 
-    let rebuilt = result.join("\n") + "\n";
-    fs::write(state_path, rebuilt).context("failed to write state.md")?;
+    fs::write(state_path, result.join("\n") + "\n").context("failed to write state.md")?;
     Ok(())
 }
 
@@ -459,5 +464,17 @@ mod tests {
         )
         .expect("write state");
         assert_eq!(read_state_status(tmp.path()).expect("status"), "incomplete");
+    }
+
+    #[test]
+    fn validates_openai_susfile() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            tmp.path().join("susfile"),
+            "{\"api\":\"openai\",\"model\":\"gpt-4.1\"}",
+        )
+        .expect("write susfile");
+        let cfg = load_susfile(tmp.path()).expect("config should parse");
+        assert_eq!(cfg.api, "openai");
     }
 }
