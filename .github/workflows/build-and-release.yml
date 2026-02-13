@@ -11,31 +11,32 @@ permissions:
 
 jobs:
   build-test-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
+    env:
+      TARGET: aarch64-unknown-linux-gnu
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
 
       - name: Test
         run: cargo test --all-targets
 
-      - name: Build (x86_64-unknown-linux-gnu)
-        run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Build release (ARM64)
+        run: cargo build --release --target ${{ env.TARGET }}
 
       - name: Package
         run: |
-          cp target/x86_64-unknown-linux-gnu/release/opensus opensus
-          tar -czf opensus-x86_64-unknown-linux-gnu.tar.gz opensus
+          cp target/${{ env.TARGET }}/release/opensus opensus
+          tar -czf opensus-${{ env.TARGET }}.tar.gz opensus
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: opensus-x86_64-unknown-linux-gnu
-          path: opensus-x86_64-unknown-linux-gnu.tar.gz
+          name: opensus-${{ env.TARGET }}
+          path: opensus-${{ env.TARGET }}.tar.gz
 
       - name: Release
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
@@ -46,4 +47,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           make_latest: true
-          files: opensus-x86_64-unknown-linux-gnu.tar.gz
+          files: opensus-aarch64-unknown-linux-gnu.tar.gz
