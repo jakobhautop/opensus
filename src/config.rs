@@ -8,6 +8,8 @@ pub struct Susfile {
     pub api: String,
     pub model: String,
     pub max_agents_per_time: usize,
+    #[serde(default = "default_heartbeat_seconds")]
+    pub heartbeat_seconds: u64,
     pub tools: ToolsConfig,
 }
 
@@ -38,6 +40,9 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
     if cfg.max_agents_per_time == 0 {
         bail!("susfile.max_agents_per_time must be > 0");
     }
+    if cfg.heartbeat_seconds == 0 {
+        bail!("susfile.heartbeat_seconds must be > 0");
+    }
     if cfg.tools.nmap.ips.is_empty() {
         bail!("susfile.tools.nmap.ips must include at least one IP");
     }
@@ -49,10 +54,15 @@ pub fn default_susfile() -> Susfile {
         api: "openai".to_string(),
         model: "gpt-4.1".to_string(),
         max_agents_per_time: 2,
+        heartbeat_seconds: 1,
         tools: ToolsConfig {
             nmap: NmapConfig {
                 ips: vec!["127.0.0.1".to_string()],
             },
         },
     }
+}
+
+fn default_heartbeat_seconds() -> u64 {
+    1
 }

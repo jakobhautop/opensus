@@ -10,7 +10,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Run one orchestration heartbeat cycle.
+    /// Run continuous orchestration heartbeats.
     Go,
     /// Initialize workspace files and prompts.
     Init,

@@ -10,7 +10,10 @@ use std::{
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
-use tokio::task::JoinHandle;
+use tokio::{
+    task::JoinHandle,
+    time::{sleep, Duration},
+};
 
 const MAIN_AGENT_PROMPT: &str = include_str!("../prompts/main_agent.md");
 const PLANNING_AGENT_PROMPT: &str = include_str!("../prompts/planning_agent.md");
@@ -89,23 +92,28 @@ pub async fn handle_go(root: &Path) -> Result<()> {
         handles: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
 
-    run_llm_agent(ctx.clone(), "main_agent", None).await?;
+    loop {
+        if ctx.active_workers.load(Ordering::SeqCst) < ctx.cfg.max_agents_per_time {
+            if let Err(err) = run_llm_agent(ctx.clone(), "main_agent", None).await {
+                eprintln!("main_agent heartbeat failed: {err}");
+            }
 
-    // wait for spawned agents from this heartbeat
-    let drained = {
-        let mut handles = ctx.handles.lock().expect("handles mutex poisoned");
-        std::mem::take(&mut *handles)
-    };
+            let drained = {
+                let mut handles = ctx.handles.lock().expect("handles mutex poisoned");
+                std::mem::take(&mut *handles)
+            };
 
-    for h in drained {
-        match h.await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => eprintln!("spawned agent error: {err}"),
-            Err(err) => eprintln!("spawned task join error: {err}"),
+            for h in drained {
+                match h.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => eprintln!("spawned agent error: {err}"),
+                    Err(err) => eprintln!("spawned task join error: {err}"),
+                }
+            }
         }
-    }
 
-    Ok(())
+        sleep(Duration::from_secs(ctx.cfg.heartbeat_seconds)).await;
+    }
 }
 
 async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<String>) -> Result<()> {

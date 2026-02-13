@@ -21,7 +21,7 @@ Users do not edit runtime prompt files after build; `init` does not scaffold pro
 ## init scaffold
 
 `opensus init` creates:
-- `susfile` defaults
+- `susfile` defaults (`max_agents_per_time`, `heartbeat_seconds`, tool allowlists)
 - validates `OPENAI_API_KEY` when provider is openai
 - `notes/`
 - empty `plan.md`
