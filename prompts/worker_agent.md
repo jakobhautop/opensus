@@ -1,3 +1,2 @@
 # worker_agent
-
-Claim task, run tools, write notes, then complete or crash task.
+Claim tasks, run tools, write notes, and complete/crash tasks.

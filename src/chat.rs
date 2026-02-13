@@ -1,34 +1,76 @@
+use anyhow::{Context, Result};
+use reqwest::Client;
 use serde_json::{json, Value};
 
-pub fn main_agent_tool_defs() -> Vec<Value> {
-    vec![
-        json!({"type":"function","function":{"name":"read_plan","description":"Read current plan.md","parameters":{"type":"object","properties":{}}}}),
-        json!({"type":"function","function":{"name":"write_plan","description":"Write plan.md markdown","parameters":{"type":"object","properties":{"markdown":{"type":"string"}},"required":["markdown"]}}}),
-        json!({"type":"function","function":{"name":"spawn_agent","description":"Spawn worker by task id","parameters":{"type":"object","properties":{"task_id":{"type":"string"}},"required":["task_id"]}}}),
-        json!({"type":"function","function":{"name":"read_worker_count","description":"Read concurrent running worker count","parameters":{"type":"object","properties":{}}}}),
-    ]
+pub fn tools_for_agent(agent: &str) -> Vec<Value> {
+    match agent {
+        "main_agent" => vec![
+            tool_no_args("read_plan", "Read plan.md"),
+            tool_write_plan(),
+            tool_spawn_agent(),
+            tool_no_args("read_worker_count", "Read current active worker count"),
+        ],
+        "planning_agent" => vec![tool_no_args("read_plan", "Read plan.md"), tool_write_plan()],
+        "worker_agent" => vec![
+            tool_no_args("read_plan", "Read plan.md"),
+            tool_single_id("claim_task", "Claim task and set to pending"),
+            tool_single_id("complete_task", "Mark task complete"),
+            json!({"type":"function","function":{"name":"add_note","description":"Append note text to notes/<task-id>.md","parameters":{"type":"object","properties":{"id":{"type":"string"},"note":{"type":"string"}},"required":["id","note"]}}}),
+            tool_no_args("nmap_verify", "Verify nmap installation"),
+            json!({"type":"function","function":{"name":"nmap_aggressive_scan","description":"Run nmap -A against an allowlisted IP","parameters":{"type":"object","properties":{"ip":{"type":"string"}},"required":["ip"]}}}),
+        ],
+        "report_agent" => vec![tool_no_args("read_plan", "Read plan.md")],
+        _ => vec![],
+    }
 }
 
-pub fn planning_agent_tool_defs() -> Vec<Value> {
-    vec![
-        json!({"type":"function","function":{"name":"read_plan","description":"Read current plan.md","parameters":{"type":"object","properties":{}}}}),
-        json!({"type":"function","function":{"name":"write_plan","description":"Write plan.md markdown","parameters":{"type":"object","properties":{"markdown":{"type":"string"}},"required":["markdown"]}}}),
-    ]
+fn tool_no_args(name: &str, description: &str) -> Value {
+    json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":{}}}})
 }
 
-pub fn worker_agent_tool_defs() -> Vec<Value> {
-    vec![
-        json!({"type":"function","function":{"name":"read_plan","description":"Read current plan.md","parameters":{"type":"object","properties":{}}}}),
-        json!({"type":"function","function":{"name":"claim_task","description":"Claim task and set pending","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}}),
-        json!({"type":"function","function":{"name":"complete_task","description":"Complete task","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}}),
-        json!({"type":"function","function":{"name":"add_note","description":"Append note to task note","parameters":{"type":"object","properties":{"id":{"type":"string"},"note":{"type":"string"}},"required":["id","note"]}}}),
-        json!({"type":"function","function":{"name":"nmap_verify","description":"Verify nmap installation","parameters":{"type":"object","properties":{}}}}),
-        json!({"type":"function","function":{"name":"nmap_aggressive_scan","description":"Run nmap -A against task host","parameters":{"type":"object","properties":{"ip":{"type":"string"}},"required":["ip"]}}}),
-    ]
+fn tool_single_id(name: &str, description: &str) -> Value {
+    json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}})
 }
 
-pub fn report_agent_tool_defs() -> Vec<Value> {
-    vec![
-        json!({"type":"function","function":{"name":"read_plan","description":"Read current plan.md","parameters":{"type":"object","properties":{}}}}),
-    ]
+fn tool_write_plan() -> Value {
+    json!({"type":"function","function":{"name":"write_plan","description":"Write full markdown to plan.md","parameters":{"type":"object","properties":{"markdown":{"type":"string"}},"required":["markdown"]}}})
+}
+
+fn tool_spawn_agent() -> Value {
+    json!({"type":"function","function":{"name":"spawn_agent","description":"Spawn an agent by name. For worker_agent include task_id.","parameters":{"type":"object","properties":{"name":{"type":"string"},"task_id":{"type":"string"}},"required":["name"]}}})
+}
+
+pub async fn create_chat_completion(
+    client: &Client,
+    api_key: &str,
+    model: &str,
+    messages: &[Value],
+    tools: &[Value],
+) -> Result<Value> {
+    let body = json!({
+        "model": model,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto"
+    });
+
+    let response = client
+        .post("https://api.openai.com/v1/chat/completions")
+        .bearer_auth(api_key)
+        .json(&body)
+        .send()
+        .await
+        .context("failed to call OpenAI chat completions")?;
+
+    let status = response.status();
+    let value: Value = response
+        .json()
+        .await
+        .context("failed to parse OpenAI response JSON")?;
+
+    if !status.is_success() {
+        return Err(anyhow::anyhow!("OpenAI error {}: {}", status, value));
+    }
+
+    Ok(value)
 }

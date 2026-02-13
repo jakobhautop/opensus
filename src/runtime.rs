@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -8,29 +8,25 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use tokio::task::JoinSet;
+use reqwest::Client;
+use serde_json::{json, Value};
+use tokio::task::JoinHandle;
 
 use crate::{
-    chat::{
-        main_agent_tool_defs, planning_agent_tool_defs, report_agent_tool_defs,
-        worker_agent_tool_defs,
-    },
-    config::{default_susfile, load_susfile},
-    plan::{parse_tasks, planning_complete, read_plan, update_task_status, write_plan, TaskStatus},
+    chat::{create_chat_completion, tools_for_agent},
+    config::{default_susfile, load_susfile, Susfile},
+    plan::{parse_tasks, read_plan, update_task_status, write_plan, TaskStatus},
     tools::{nmap_scan_aggressive, nmap_verify},
 };
 
 #[derive(Clone)]
 struct RuntimeCtx {
-    root: Arc<std::path::PathBuf>,
+    root: Arc<PathBuf>,
+    cfg: Susfile,
+    api_key: Arc<String>,
+    client: Client,
     active_workers: Arc<AtomicUsize>,
-}
-
-#[derive(Clone, Copy)]
-enum AgentKind {
-    Planning,
-    Worker,
-    Report,
+    handles: Arc<std::sync::Mutex<Vec<JoinHandle<Result<()>>>>>,
 }
 
 pub fn handle_init(root: &Path) -> Result<()> {
@@ -47,195 +43,216 @@ pub fn handle_init(root: &Path) -> Result<()> {
 
     fs::create_dir_all(root.join("notes")).context("failed to create notes/")?;
     write_if_missing(&root.join("plan.md"), "")?;
+    write_if_missing(
+        &root.join("brief.md"),
+        "# Brief\n\nDescribe assignment scope and goals for agents.\n",
+    )?;
 
     fs::create_dir_all(root.join("prompts")).context("failed to create prompts/")?;
     write_if_missing(
         &root.join("prompts/main_agent.md"),
-        "# main_agent\n\nRead plan and spawn planning/worker/report agents as needed.\n",
+        "# main_agent\nYou orchestrate. Read/write plan, spawn agents, and monitor worker concurrency.\n",
     )?;
     write_if_missing(
         &root.join("prompts/planning_agent.md"),
-        "# planning_agent\n\nCreate or update plan.md with actionable tasks.\n",
+        "# planning_agent\nCreate/update plan.md from brief.md with concrete task IDs.\n",
     )?;
     write_if_missing(
         &root.join("prompts/worker_agent.md"),
-        "# worker_agent\n\nClaim task, run tools, write notes, and complete or crash task.\n",
+        "# worker_agent\nClaim tasks, run tools, write notes, and complete/crash tasks.\n",
     )?;
     write_if_missing(
         &root.join("prompts/report_agent.md"),
-        "# report_agent\n\nGenerate report.md once planning is complete and no tasks remain.\n",
+        "# report_agent\nProduce report.md after all tasks are complete.\n",
     )?;
+
     Ok(())
 }
 
 pub async fn handle_go(root: &Path) -> Result<()> {
     handle_init(root)?;
     let cfg = load_susfile(root)?;
+    let api_key = std::env::var("OPENAI_API_KEY").context("missing OPENAI_API_KEY")?;
+
     let ctx = RuntimeCtx {
         root: Arc::new(root.to_path_buf()),
+        cfg,
+        api_key: Arc::new(api_key),
+        client: Client::new(),
         active_workers: Arc::new(AtomicUsize::new(0)),
+        handles: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
 
-    // main_agent invoked with tool definitions (OpenAI style payloads)
-    let _main_tools = main_agent_tool_defs();
+    run_llm_agent(ctx.clone(), "main_agent", None).await?;
 
-    let plan_md = read_plan(root)?;
-    if plan_md.trim().is_empty() {
-        spawn_agent(ctx.clone(), AgentKind::Planning, None).await?;
-        return Ok(());
+    // wait for spawned agents from this heartbeat
+    let drained = {
+        let mut handles = ctx.handles.lock().expect("handles mutex poisoned");
+        std::mem::take(&mut *handles)
+    };
+
+    for h in drained {
+        match h.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => eprintln!("spawned agent error: {err}"),
+            Err(err) => eprintln!("spawned task join error: {err}"),
+        }
     }
 
-    let tasks = parse_tasks(&plan_md);
-    let mut joinset = JoinSet::new();
-    for task in tasks {
-        if !matches!(task.status, TaskStatus::Open) {
-            continue;
-        }
-        if ctx.active_workers.load(Ordering::SeqCst) >= cfg.max_agents_per_time {
+    Ok(())
+}
+
+async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<String>) -> Result<()> {
+    let prompt_path = ctx.root.join("prompts").join(format!("{agent_name}.md"));
+    let system_prompt = fs::read_to_string(&prompt_path)
+        .with_context(|| format!("failed to read {}", prompt_path.display()))?;
+    let tools = tools_for_agent(agent_name);
+
+    let brief = fs::read_to_string(ctx.root.join("brief.md")).unwrap_or_default();
+    let user_task = task_hint.unwrap_or_else(|| {
+        format!(
+            "Use brief.md + plan.md to progress the mission.\n\nBrief:\n{}",
+            brief
+        )
+    });
+
+    let mut messages = vec![
+        json!({"role":"system","content":system_prompt}),
+        json!({"role":"user","content":user_task}),
+    ];
+
+    for _ in 0..12 {
+        let response =
+            create_chat_completion(&ctx.client, &ctx.api_key, &ctx.cfg.model, &messages, &tools)
+                .await?;
+
+        let message = response["choices"][0]["message"].clone();
+        let tool_calls = message["tool_calls"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+
+        messages.push(message.clone());
+
+        if tool_calls.is_empty() {
             break;
         }
-        ctx.active_workers.fetch_add(1, Ordering::SeqCst);
-        let ctx_clone = ctx.clone();
-        let task_id = task.id.clone();
-        joinset.spawn(async move {
-            let result = run_agent(ctx_clone.clone(), AgentKind::Worker, Some(task_id)).await;
-            ctx_clone.active_workers.fetch_sub(1, Ordering::SeqCst);
-            result
-        });
-    }
 
-    while let Some(res) = joinset.join_next().await {
-        match res {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                eprintln!("worker agent failed: {err}");
-            }
-            Err(err) => {
-                eprintln!("worker task join failure: {err}");
-            }
+        for tc in tool_calls {
+            let id = tc["id"].as_str().unwrap_or_default();
+            let name = tc["function"]["name"].as_str().unwrap_or_default();
+            let args_raw = tc["function"]["arguments"].as_str().unwrap_or("{}");
+            let args: Value = serde_json::from_str(args_raw).unwrap_or_else(|_| json!({}));
+
+            let tool_result = execute_tool_call(ctx.clone(), agent_name, name, args);
+            let content = match tool_result {
+                Ok(v) => v,
+                Err(err) => format!("tool error: {err}"),
+            };
+
+            messages.push(json!({
+                "role": "tool",
+                "tool_call_id": id,
+                "content": content
+            }));
         }
-    }
-
-    let post_plan = read_plan(root)?;
-    let post_tasks = parse_tasks(&post_plan);
-    let no_tasks_left = post_tasks
-        .iter()
-        .all(|t| matches!(t.status, TaskStatus::Complete));
-
-    if planning_complete(&post_plan) && !post_tasks.is_empty() && no_tasks_left {
-        spawn_agent(ctx, AgentKind::Report, None).await?;
     }
 
     Ok(())
 }
 
-async fn spawn_agent(ctx: RuntimeCtx, kind: AgentKind, task_id: Option<String>) -> Result<()> {
-    // single spawn function for all agent types
-    let handle = tokio::spawn(async move { run_agent(ctx, kind, task_id).await });
-    handle.await?
-}
+fn execute_tool_call(
+    ctx: RuntimeCtx,
+    caller_agent: &str,
+    name: &str,
+    args: Value,
+) -> Result<String> {
+    match name {
+        "read_plan" => Ok(read_plan(&ctx.root)?),
+        "write_plan" => {
+            let markdown = args["markdown"]
+                .as_str()
+                .context("write_plan requires markdown")?;
+            write_plan(&ctx.root, markdown)?;
+            Ok("ok".to_string())
+        }
+        "read_worker_count" => Ok(ctx.active_workers.load(Ordering::SeqCst).to_string()),
+        "spawn_agent" => {
+            if caller_agent != "main_agent" {
+                bail!("spawn_agent only allowed for main_agent");
+            }
+            let agent = args["name"].as_str().context("spawn_agent requires name")?;
+            let task_id = args
+                .get("task_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
 
-async fn run_agent(ctx: RuntimeCtx, kind: AgentKind, task_id: Option<String>) -> Result<()> {
-    let (prompt_file, _tool_defs) = match kind {
-        AgentKind::Planning => ("planning_agent.md", planning_agent_tool_defs()),
-        AgentKind::Worker => ("worker_agent.md", worker_agent_tool_defs()),
-        AgentKind::Report => ("report_agent.md", report_agent_tool_defs()),
-    };
+            if agent == "worker_agent"
+                && ctx.active_workers.load(Ordering::SeqCst) >= ctx.cfg.max_agents_per_time
+            {
+                return Ok("worker capacity reached".to_string());
+            }
 
-    let _prompt = fs::read_to_string(ctx.root.join("prompts").join(prompt_file))
-        .with_context(|| format!("failed to load prompt {}", prompt_file))?;
+            if agent == "worker_agent" {
+                ctx.active_workers.fetch_add(1, Ordering::SeqCst);
+            }
 
-    match kind {
-        AgentKind::Planning => run_planning_agent(&ctx.root),
-        AgentKind::Worker => {
-            let id = task_id.context("worker task_id required")?;
-            match run_worker_agent(&ctx.root, &id) {
-                Ok(()) => Ok(()),
-                Err(err) => {
-                    let _ = mark_task_crashed(&ctx.root, &id, &err.to_string());
-                    Err(err)
+            let ctx_clone = ctx.clone();
+            let agent_name = agent.to_string();
+            let handle = tokio::spawn(async move {
+                let result = run_llm_agent(ctx_clone.clone(), &agent_name, task_id).await;
+                if agent_name == "worker_agent" {
+                    ctx_clone.active_workers.fetch_sub(1, Ordering::SeqCst);
                 }
+                result
+            });
+            ctx.handles
+                .lock()
+                .expect("handles mutex poisoned")
+                .push(handle);
+            Ok(format!("spawned {agent}"))
+        }
+        "claim_task" => {
+            let id = args["id"].as_str().context("claim_task requires id")?;
+            let plan = read_plan(&ctx.root)?;
+            let task = parse_tasks(&plan)
+                .into_iter()
+                .find(|t| t.id == id)
+                .context("task not found")?;
+            claim_task(&ctx.root, &task.id, &task.title)?;
+            Ok("claimed".to_string())
+        }
+        "complete_task" => {
+            let id = args["id"].as_str().context("complete_task requires id")?;
+            complete_task(&ctx.root, id)?;
+            Ok("completed".to_string())
+        }
+        "add_note" => {
+            let id = args["id"].as_str().context("add_note requires id")?;
+            let note = args["note"].as_str().context("add_note requires note")?;
+            add_note(&ctx.root, id, note)?;
+            Ok("noted".to_string())
+        }
+        "nmap_verify" => {
+            let (stdin, stdout, stderr) = nmap_verify()?;
+            Ok(format!(
+                "stdin:\n{stdin}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            ))
+        }
+        "nmap_aggressive_scan" => {
+            let ip = args["ip"]
+                .as_str()
+                .context("nmap_aggressive_scan requires ip")?;
+            if !ctx.cfg.tools.nmap.ips.iter().any(|allowed| allowed == ip) {
+                bail!("ip not allowlisted in susfile.tools.nmap.ips");
             }
+            let (stdin, stdout, stderr) = nmap_scan_aggressive(ip)?;
+            Ok(format!(
+                "stdin:\n{stdin}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            ))
         }
-        AgentKind::Report => run_report_agent(&ctx.root),
+        _ => bail!("unknown tool: {name}"),
     }
-}
-
-fn run_planning_agent(root: &Path) -> Result<()> {
-    let current = read_plan(root)?;
-    if current.trim().is_empty() {
-        let cfg = load_susfile(root)?;
-        let mut tasks = String::new();
-        for (idx, ip) in cfg.tools.nmap.ips.iter().enumerate() {
-            tasks.push_str(&format!("- [ ] T{:03} - Aggressive scan {}\n", idx + 1, ip));
-        }
-        let markdown = format!(
-            "# Plan\n\nplanning_status: complete\n\n## Intelligence gathering\n\n### nmap tasks\n\n{}",
-            tasks
-        );
-        write_plan(root, &markdown)?;
-    }
-    Ok(())
-}
-
-fn run_worker_agent(root: &Path, task_id: &str) -> Result<()> {
-    let plan = read_plan(root)?;
-    let task = parse_tasks(&plan)
-        .into_iter()
-        .find(|t| t.id == task_id)
-        .context("task not found")?;
-
-    claim_task(root, &task.id, &task.title)?;
-
-    let (cmd_verify, out_verify, err_verify) = nmap_verify()?;
-    record_tool_call(
-        root,
-        &task.id,
-        "nmap_verify",
-        &cmd_verify,
-        &out_verify,
-        &err_verify,
-    )?;
-
-    let cfg = load_susfile(root)?;
-    let target_ip = select_scan_ip(&task.title, &cfg.tools.nmap.ips)?;
-    let (cmd_scan, out_scan, err_scan) = nmap_scan_aggressive(&target_ip)?;
-    record_tool_call(
-        root,
-        &task.id,
-        "nmap_aggressive_scan",
-        &cmd_scan,
-        &out_scan,
-        &err_scan,
-    )?;
-
-    add_note(root, &task.id, &format!("Completed task on {target_ip}"))?;
-    complete_task(root, &task.id)
-}
-
-fn run_report_agent(root: &Path) -> Result<()> {
-    let plan = read_plan(root)?;
-    let tasks = parse_tasks(&plan);
-    let remaining = tasks
-        .iter()
-        .filter(|t| !matches!(t.status, TaskStatus::Complete))
-        .count();
-    let report = format!(
-        "# Pentest Report\n\nGenerated by report_agent.\n\n- Tasks: {}\n- Remaining: {}\n",
-        tasks.len(),
-        remaining
-    );
-    fs::write(root.join("report.md"), report).context("failed to write report.md")
-}
-
-fn select_scan_ip(task_title: &str, allowlisted_ips: &[String]) -> Result<String> {
-    for token in task_title.split_whitespace() {
-        let cleaned = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.');
-        if allowlisted_ips.iter().any(|ip| ip == cleaned) {
-            return Ok(cleaned.to_string());
-        }
-    }
-    bail!("task title does not contain allowlisted IP")
 }
 
 fn claim_task(root: &Path, task_id: &str, title: &str) -> Result<()> {
@@ -248,6 +265,7 @@ fn complete_task(root: &Path, task_id: &str) -> Result<()> {
     set_note_state(root, task_id, "complete")
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn mark_task_crashed(root: &Path, task_id: &str, reason: &str) -> Result<()> {
     update_task_status(root, task_id, TaskStatus::Crashed)?;
     set_note_state(root, task_id, "crashed")?;
@@ -288,22 +306,6 @@ fn add_note(root: &Path, task_id: &str, note: &str) -> Result<()> {
     fs::write(path, content).context("failed to append note")
 }
 
-fn record_tool_call(
-    root: &Path,
-    task_id: &str,
-    tool: &str,
-    stdin: &str,
-    stdout: &str,
-    stderr: &str,
-) -> Result<()> {
-    let path = root.join("notes").join(format!("{task_id}.md"));
-    let mut content = fs::read_to_string(&path).context("failed to read note")?;
-    content.push_str(&format!(
-        "\n### {tool}\n- stdin:\n```\n{stdin}\n```\n- stdout:\n```\n{stdout}\n```\n- stderr:\n```\n{stderr}\n```\n"
-    ));
-    fs::write(path, content).context("failed to append tool record")
-}
-
 fn write_if_missing(path: &Path, content: &str) -> Result<()> {
     if !path.exists() {
         fs::write(path, content).with_context(|| format!("failed writing {}", path.display()))?;
@@ -316,15 +318,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exact_ip_match_not_substring() {
-        let allow = vec!["10.0.0.1".to_string(), "10.0.0.10".to_string()];
-        let ip = select_scan_ip("Aggressive scan 10.0.0.10", &allow).expect("match");
-        assert_eq!(ip, "10.0.0.10");
-    }
-
-    #[test]
-    fn missing_ip_fails() {
-        let allow = vec!["10.0.0.1".to_string()];
-        assert!(select_scan_ip("Aggressive scan host-a", &allow).is_err());
+    fn crash_marking_updates_plan() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::create_dir_all(tmp.path().join("notes")).expect("notes");
+        write_plan(
+            tmp.path(),
+            "# Plan\n\nplanning_status: complete\n\n- [ ] T001 - Aggressive scan 10.0.0.1\n",
+        )
+        .expect("plan");
+        ensure_task_note(tmp.path(), "T001", "Aggressive scan 10.0.0.1", "open").expect("note");
+        mark_task_crashed(tmp.path(), "T001", "boom").expect("crash");
+        let p = read_plan(tmp.path()).expect("read plan");
+        assert!(p.contains("- [!] T001"));
     }
 }

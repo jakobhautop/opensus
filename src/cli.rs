@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(name = "opensus")]
-#[command(about = "Automatic pentest report swarm orchestrator")]
+#[command(about = "LLM pentest orchestration runtime")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

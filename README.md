@@ -1,65 +1,29 @@
-# OpenSus
+# OpenSus - LLMs for Pentesting
 
-OpenSus is a heartbeat-driven multi-agent system for automatic pentest reporting.
+OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM workers all commited to one assignment. OpenSus is meant to run in an environment with nmap, metasploit and other pentest tools (Kali Linux for example). User runs "opensus init" to scaffold a project. They then write an assignment "brief.md" that provides opensus agents the context they need and adjust the susfile with config. User then runs "opensus go" to start the main_agent which will coordinate planning, working and reporting agents until assignment is completed.
 
 ## Public commands
 
 - `opensus init`
 - `opensus go`
 
-## Runtime prompts
-
-OpenSus uses these prompt files:
+## Prompt files
 
 - `prompts/main_agent.md`
 - `prompts/planning_agent.md`
 - `prompts/worker_agent.md`
 - `prompts/report_agent.md`
 
-## `opensus init`
+## init scaffold
 
-`init` performs:
-1. create `susfile` defaults
-2. validate `OPENAI_API_KEY` exists when `susfile.api` is `openai`
-3. create `notes/`
-4. create empty `plan.md`
+`opensus init` creates:
+- `susfile` defaults
+- validates `OPENAI_API_KEY` when provider is openai
+- `notes/`
+- empty `plan.md`
+- `brief.md`
+- prompt files under `prompts/`
 
-## `susfile`
+## LLM runtime model
 
-```json
-{
-  "api": "openai",
-  "model": "gpt-4.1",
-  "max_agents_per_time": 2,
-  "tools": {
-    "nmap": {
-      "ips": ["127.0.0.1"]
-    }
-  }
-}
-```
-
-- `max_agents_per_time` limits concurrent worker agents per heartbeat.
-- `tools.nmap.ips` is allowlist for aggressive scans.
-
-## `go` flow
-
-- `main_agent` reads `plan.md`.
-- If empty, it spawns `planning_agent`.
-- Otherwise it spawns `worker_agent` tasks up to `max_agents_per_time`.
-- When planning is complete and all tasks are complete, it spawns `report_agent`.
-
-## Notes format
-
-Each claimed task creates `notes/<task-id>.md`:
-
-```md
----
-state: open|complete|crashed
----
-# Task: <title>
-## Tools
-## Notes
-```
-
-Tool calls append stdin/stdout/stderr blocks under `## Tools`.
+`opensus go` invokes `main_agent` via OpenAI Chat Completions and provides tool definitions in the request. Agents decide tool usage themselves. OpenSus executes returned tool calls and feeds results back to the LLM until the agent completes.
