@@ -128,3 +128,9 @@ pub fn running_workers_for_task(entries: &[SwarmEntry], task_id: &str) -> bool {
             && entry.agent == "work_agent"
     })
 }
+
+pub fn has_running_agent(entries: &[SwarmEntry], agent: &str) -> bool {
+    entries
+        .iter()
+        .any(|entry| entry.agent == agent && entry.status == AgentStatus::Running)
+}

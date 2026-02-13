@@ -6,7 +6,7 @@ use crate::{
     chat::{main_agent_brief, plan_agent_brief, reporter_agent_brief, work_agent_brief},
     config::load_susfile,
     plan::{parse_tasks, planning_complete, read_plan, update_task_status, write_plan, TaskStatus},
-    swarm::{read_swarm, running_workers_for_task, AgentStatus},
+    swarm::{has_running_agent, read_swarm, running_workers_for_task, AgentStatus},
     tools::{
         mark_internal_swarm_complete, mark_internal_swarm_crashed, nmap_scan_aggressive,
         nmap_verify, spawn_plan_agent, spawn_reporter_agent, spawn_work_agent,
@@ -32,15 +32,20 @@ fn run_main_agent(root: &Path) -> Result<()> {
 
     // read_plan()
     let plan_markdown = read_plan(root)?;
+
+    // read_swarm()
+    let swarm = read_swarm(root)?;
+
     if plan_markdown.is_none() {
+        if has_running_agent(&swarm, "plan_agent") {
+            println!("main_agent: plan_agent already running; waiting for next heartbeat.");
+            return Ok(());
+        }
         println!("main_agent: no plan.md found, spawning plan_agent.");
         spawn_plan_agent(root)?;
         return Ok(());
     }
     let plan_markdown = plan_markdown.expect("checked is_some");
-
-    // read_swarm()
-    let swarm = read_swarm(root)?;
 
     let tasks = parse_tasks(&plan_markdown);
     let remaining_tasks = tasks
@@ -143,14 +148,7 @@ pub fn handle_work_agent(root: &Path, task_id: &str) -> Result<()> {
 
         // nmap_aggressive_scan()
         let cfg = load_susfile(root)?;
-        let scan_ip = cfg
-            .tools
-            .nmap
-            .ips
-            .iter()
-            .find(|ip| task.title.contains(ip.as_str()))
-            .cloned()
-            .unwrap_or_else(|| cfg.tools.nmap.ips[0].clone());
+        let scan_ip = select_scan_ip(&task.title, &cfg.tools.nmap.ips)?;
         let (stdin_scan, stdout_scan, stderr_scan) = nmap_scan_aggressive(&scan_ip)?;
         record_tool_call(
             root,
@@ -316,4 +314,34 @@ fn write_if_missing(path: &Path, content: &str) -> Result<()> {
             .with_context(|| format!("failed to write file {}", path.display()))?;
     }
     Ok(())
+}
+
+fn select_scan_ip(task_title: &str, allowlisted_ips: &[String]) -> Result<String> {
+    let tokens: Vec<String> = task_title
+        .split_whitespace()
+        .map(|t| t.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.'))
+        .filter(|t| !t.is_empty())
+        .map(ToString::to_string)
+        .collect();
+
+    for token in tokens {
+        if allowlisted_ips.iter().any(|ip| ip == &token) {
+            return Ok(token);
+        }
+    }
+
+    bail!("task title does not contain an allowlisted IP")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_scan_ip_matches_exact_token_not_substring() {
+        let allow = vec!["10.0.0.1".to_string(), "10.0.0.10".to_string()];
+        let task = "Aggressive scan 10.0.0.10";
+        let ip = select_scan_ip(task, &allow).expect("expected exact match");
+        assert_eq!(ip, "10.0.0.10");
+    }
 }

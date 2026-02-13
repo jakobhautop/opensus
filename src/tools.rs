@@ -63,11 +63,12 @@ pub fn nmap_verify() -> Result<(String, String, String)> {
         .arg("--version")
         .output()
         .context("failed to execute nmap --version")?;
-    Ok((
-        "nmap --version".to_string(),
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-    ))
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        bail!("nmap --version failed: {}", stderr.trim());
+    }
+    Ok(("nmap --version".to_string(), stdout, stderr))
 }
 
 pub fn nmap_scan_aggressive(ip: &str) -> Result<(String, String, String)> {
@@ -79,9 +80,10 @@ pub fn nmap_scan_aggressive(ip: &str) -> Result<(String, String, String)> {
         .arg(ip)
         .output()
         .context("failed to execute nmap -A")?;
-    Ok((
-        format!("nmap -A {ip}"),
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-    ))
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        bail!("nmap -A failed: {}", stderr.trim());
+    }
+    Ok((format!("nmap -A {ip}"), stdout, stderr))
 }
