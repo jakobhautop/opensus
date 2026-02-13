@@ -4,8 +4,6 @@ on:
   pull_request:
   push:
     branches: ["main", "master"]
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -40,7 +38,12 @@ jobs:
           path: opensus-x86_64-unknown-linux-gnu.tar.gz
 
       - name: Release
-        if: github.event_name == 'release'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: auto-${{ github.sha }}
+          name: Auto release ${{ github.sha }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          make_latest: true
           files: opensus-x86_64-unknown-linux-gnu.tar.gz
