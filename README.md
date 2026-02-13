@@ -36,3 +36,8 @@ Example `susfile`:
 4. Workers run as independent OS processes via internal runtime spawning.
 5. `prompts/swarm.md` is updated on spawn/completion/crash.
 6. Next `opensus go` resumes deterministically from filesystem state.
+
+
+## Tools
+
+- `nmap_verify`: runs `nmap --version` and captures the version banner for agent execution checks.

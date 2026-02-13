@@ -69,6 +69,31 @@ trait Tool {
     fn call(&self, args: Value) -> Result<String>;
 }
 
+struct NmapVerifyTool;
+
+impl Tool for NmapVerifyTool {
+    fn call(&self, _args: Value) -> Result<String> {
+        let output = Command::new("nmap")
+            .arg("--version")
+            .output()
+            .context("failed to execute nmap --version")?;
+
+        if !output.status.success() {
+            bail!("nmap --version failed with status {}", output.status);
+        }
+
+        let stdout = String::from_utf8(output.stdout).context("nmap output was not valid UTF-8")?;
+        let first_line = stdout
+            .lines()
+            .next()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .context("nmap --version returned empty output")?;
+
+        Ok(format!("nmap_verify: {first_line}"))
+    }
+}
+
 struct SpawnAgentTool {
     root: PathBuf,
 }
@@ -240,8 +265,10 @@ fn run_main_orchestration(root: &Path, _prompt: &str, task: &str) -> Result<()> 
 }
 
 fn run_worker_agent(root: &Path, name: &str, _prompt: &str, task: &str) -> Result<()> {
+    let nmap_verify = NmapVerifyTool.call(serde_json::json!({}))?;
+
     let log_path = root.join(format!(".{name}.log"));
-    let entry = format!("task: {task}\nstatus: completed\n\n");
+    let entry = format!("task: {task}\n{nmap_verify}\nstatus: completed\n\n");
     fs::write(log_path, entry).context("failed to write worker log")?;
     Ok(())
 }
