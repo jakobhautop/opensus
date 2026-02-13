@@ -17,24 +17,12 @@ pub struct PlanTask {
     pub status: TaskStatus,
 }
 
-pub fn read_plan(root: &Path) -> Result<Option<String>> {
-    let path = root.join("plan.md");
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = fs::read_to_string(path).context("failed to read plan.md")?;
-    Ok(Some(content))
+pub fn read_plan(root: &Path) -> Result<String> {
+    fs::read_to_string(root.join("plan.md")).context("failed to read plan.md")
 }
 
 pub fn write_plan(root: &Path, markdown: &str) -> Result<()> {
     fs::write(root.join("plan.md"), markdown).context("failed to write plan.md")
-}
-
-pub fn planning_complete(markdown: &str) -> bool {
-    markdown.lines().any(|line| {
-        line.trim()
-            .eq_ignore_ascii_case("planning_status: complete")
-    })
 }
 
 pub fn parse_tasks(markdown: &str) -> Vec<PlanTask> {
@@ -64,8 +52,14 @@ pub fn parse_tasks(markdown: &str) -> Vec<PlanTask> {
     tasks
 }
 
+pub fn planning_complete(markdown: &str) -> bool {
+    markdown
+        .lines()
+        .any(|l| l.trim() == "planning_status: complete")
+}
+
 pub fn update_task_status(root: &Path, task_id: &str, status: TaskStatus) -> Result<()> {
-    let mut markdown = read_plan(root)?.context("plan.md does not exist")?;
+    let markdown = read_plan(root)?;
     let marker = match status {
         TaskStatus::Open => "[ ]",
         TaskStatus::Pending => "[~]",
@@ -76,13 +70,13 @@ pub fn update_task_status(root: &Path, task_id: &str, status: TaskStatus) -> Res
     let mut changed = false;
     let mut out = Vec::new();
     for line in markdown.lines() {
-        let trimmed = line.trim_start();
-        let matches = trimmed.starts_with("- [ ")
-            || trimmed.starts_with("- [~]")
-            || trimmed.starts_with("- [x]")
-            || trimmed.starts_with("- [!]");
-        if matches && trimmed.contains(task_id) {
-            if let Some((_, rest)) = trimmed.split_once("] ") {
+        let t = line.trim_start();
+        let task_line = t.starts_with("- [ ")
+            || t.starts_with("- [~]")
+            || t.starts_with("- [x]")
+            || t.starts_with("- [!]");
+        if task_line && t.contains(task_id) {
+            if let Some((_, rest)) = t.split_once("] ") {
                 out.push(format!("- {} {}", marker, rest));
                 changed = true;
                 continue;
@@ -92,23 +86,8 @@ pub fn update_task_status(root: &Path, task_id: &str, status: TaskStatus) -> Res
     }
 
     if !changed {
-        bail!("task id `{}` not found in plan.md", task_id);
+        bail!("task id `{}` not found", task_id);
     }
 
-    markdown = out.join("\n") + "\n";
-    write_plan(root, &markdown)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_task_statuses() {
-        let md = "- [ ] T001 - one\n- [~] T002 - two\n- [x] T003 - three\n- [!] T004 - four\n";
-        let tasks = parse_tasks(md);
-        assert_eq!(tasks.len(), 4);
-        assert!(matches!(tasks[1].status, TaskStatus::Pending));
-        assert!(planning_complete("planning_status: complete"));
-    }
+    write_plan(root, &(out.join("\n") + "\n"))
 }

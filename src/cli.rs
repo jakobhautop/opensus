@@ -12,12 +12,6 @@ pub struct Cli {
 pub enum Commands {
     /// Run one orchestration heartbeat cycle.
     Go,
-    /// Initialize workspace files for an opensus mission.
+    /// Initialize workspace files and prompts.
     Init,
-    #[command(hide = true)]
-    InternalPlanAgent,
-    #[command(hide = true)]
-    InternalWorkAgent { task_id: String },
-    #[command(hide = true)]
-    InternalReporterAgent,
 }
