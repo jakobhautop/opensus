@@ -10,35 +10,62 @@ permissions:
   contents: write
 
 jobs:
-  build-test-release:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
 
       - name: Test
         run: cargo test --all-targets
 
-      - name: Build (x86_64-unknown-linux-gnu)
-        run: cargo build --release --target x86_64-unknown-linux-gnu
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      TARGET: aarch64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Install cross toolchain
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ env.TARGET }}
+
+      - name: Build (${{ env.TARGET }})
+        run: cargo build --release --target ${{ env.TARGET }}
 
       - name: Package
         run: |
-          cp target/x86_64-unknown-linux-gnu/release/opensus opensus
-          tar -czf opensus-x86_64-unknown-linux-gnu.tar.gz opensus
+          cp target/${{ env.TARGET }}/release/opensus opensus
+          tar -czf opensus-${{ env.TARGET }}.tar.gz opensus
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: opensus-x86_64-unknown-linux-gnu
-          path: opensus-x86_64-unknown-linux-gnu.tar.gz
+          name: opensus-${{ env.TARGET }}
+          path: opensus-${{ env.TARGET }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: opensus-aarch64-unknown-linux-gnu
+          merge-multiple: true
 
       - name: Release
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: auto-${{ github.sha }}
@@ -46,4 +73,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           make_latest: true
-          files: opensus-x86_64-unknown-linux-gnu.tar.gz
+          files: opensus-aarch64-unknown-linux-gnu.tar.gz
