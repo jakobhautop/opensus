@@ -6,7 +6,8 @@ OpenSus is a process-based multi-agent system for **automatic pentest reports**.
 
 - `opensus init`: create required mission files.
 - `opensus go`: run one orchestration heartbeat.
-- `opensus agent <name> <task>`: run one named agent process.
+
+Users interact only with `go` and `init`.
 
 ## Required workspace files
 
@@ -32,6 +33,6 @@ Example `susfile`:
 1. `opensus go` reads `state.md` and `susfile`.
 2. If mission is incomplete, it runs `main`.
 3. `main` can invoke `spawn_agent(name, task)`.
-4. Workers run as independent OS processes via `opensus agent ...`.
+4. Workers run as independent OS processes via internal runtime spawning.
 5. `prompts/swarm.md` is updated on spawn/completion/crash.
 6. Next `opensus go` resumes deterministically from filesystem state.

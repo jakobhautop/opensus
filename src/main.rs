@@ -22,8 +22,8 @@ struct Cli {
 enum Commands {
     /// Run one orchestration heartbeat cycle.
     Go,
-    /// Run a worker or orchestrator agent once.
-    Agent {
+    #[command(hide = true)]
+    InternalAgent {
         name: String,
         #[arg(required = true)]
         task: Vec<String>,
@@ -90,9 +90,10 @@ impl Tool for SpawnAgentTool {
         let binary = env::current_exe().unwrap_or_else(|_| PathBuf::from("opensus"));
         let status = Command::new(binary)
             .current_dir(&self.root)
-            .arg("agent")
+            .arg("internal-agent")
             .arg(name)
             .arg(task)
+            .env("OPENSUS_INTERNAL_AGENT", "1")
             .spawn();
 
         if let Err(error) = status {
@@ -110,9 +111,20 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Go => handle_go(&root),
-        Commands::Agent { name, task } => handle_agent(&root, &name, &task.join(" ")),
+        Commands::InternalAgent { name, task } => {
+            ensure_internal_invocation()?;
+            handle_agent(&root, &name, &task.join(" "))
+        }
         Commands::Init => ensure_layout(&root),
     }
+}
+
+fn ensure_internal_invocation() -> Result<()> {
+    let marker = std::env::var("OPENSUS_INTERNAL_AGENT").unwrap_or_default();
+    if marker != "1" {
+        bail!("`opensus agent` is internal-only; use `opensus go` or `opensus init`");
+    }
+    Ok(())
 }
 
 fn handle_go(root: &Path) -> Result<()> {
