@@ -10,8 +10,11 @@ permissions:
   contents: write
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  build-test-release:
+    runs-on: ubuntu-24.04-arm
+    env:
+      TARGET: aarch64-unknown-linux-gnu
+
     steps:
       - uses: actions/checkout@v4
 
@@ -21,26 +24,7 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
-  build:
-    needs: test
-    runs-on: ubuntu-latest
-    env:
-      TARGET: aarch64-unknown-linux-gnu
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ env.TARGET }}
-
-      - name: Install cross toolchain
-        uses: taiki-e/setup-cross-toolchain-action@v1
-        with:
-          target: ${{ env.TARGET }}
-
-      - name: Build (${{ env.TARGET }})
+      - name: Build release (ARM64)
         run: cargo build --release --target ${{ env.TARGET }}
 
       - name: Package
@@ -54,18 +38,8 @@ jobs:
           name: opensus-${{ env.TARGET }}
           path: opensus-${{ env.TARGET }}.tar.gz
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: opensus-aarch64-unknown-linux-gnu
-          merge-multiple: true
-
       - name: Release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: auto-${{ github.sha }}
