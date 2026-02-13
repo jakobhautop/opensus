@@ -17,5 +17,6 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Go => runtime::handle_go(&root).await,
         Commands::Init => runtime::handle_init(&root),
+        Commands::Reset => runtime::handle_reset(&root),
     }
 }

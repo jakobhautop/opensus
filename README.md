@@ -6,6 +6,7 @@ OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM work
 
 - `opensus init`
 - `opensus go`
+- `opensus reset`
 
 ## Prompt files
 
@@ -30,3 +31,7 @@ Users do not edit runtime prompt files after build; `init` does not scaffold pro
 ## LLM runtime model
 
 `opensus go` invokes `main_agent` via OpenAI Chat Completions and provides tool definitions in the request. Agents decide tool usage themselves. OpenSus executes returned tool calls and feeds results back to the LLM until the agent completes.
+
+## reset runtime artifacts
+
+`opensus reset` keeps `brief.md` and `susfile`, but clears runtime progress by emptying `plan.md` and recreating an empty `notes/` directory.
