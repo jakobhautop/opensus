@@ -18,6 +18,10 @@ const WORKER_AGENT_PROMPT: &str = include_str!("../prompts/worker_agent.md");
 const REPORT_AGENT_PROMPT: &str = include_str!("../prompts/report_agent.md");
 const HEARTBEAT_PROMPT: &str = include_str!("../prompts/heartbeat.md");
 
+fn log_event(message: impl AsRef<str>) {
+    println!("[opensus] {}", message.as_ref());
+}
+
 fn map_spawn_role_to_agent(role: &str) -> Result<&'static str> {
     match role {
         "worker" => Ok("worker_agent"),
@@ -55,6 +59,7 @@ struct RuntimeCtx {
 }
 
 pub fn handle_init(root: &Path) -> Result<()> {
+    log_event("Starting opensus init");
     let cfg = default_susfile();
     write_if_missing(
         &root.join("susfile"),
@@ -67,16 +72,37 @@ pub fn handle_init(root: &Path) -> Result<()> {
     }
 
     fs::create_dir_all(root.join("notes")).context("failed to create notes/")?;
+    log_event("Ensured notes/ exists");
     write_if_missing(&root.join("plan.md"), "")?;
+    log_event("Ensured plan.md exists");
     write_if_missing(
         &root.join("brief.md"),
         "# Brief\n\nDescribe assignment scope and goals for agents.\n",
     )?;
+    log_event("Ensured brief.md exists");
+
+    Ok(())
+}
+
+pub fn handle_reset(root: &Path) -> Result<()> {
+    log_event("Starting opensus reset");
+    handle_init(root)?;
+
+    let notes_path = root.join("notes");
+    if notes_path.exists() {
+        fs::remove_dir_all(&notes_path).context("failed to remove notes/")?;
+    }
+
+    fs::create_dir_all(&notes_path).context("failed to recreate notes/")?;
+    log_event("Reset notes/ directory");
+    fs::write(root.join("plan.md"), "").context("failed to reset plan.md")?;
+    log_event("Plan updated (plan.md reset)");
 
     Ok(())
 }
 
 pub async fn handle_go(root: &Path) -> Result<()> {
+    log_event("Starting opensus go");
     handle_init(root)?;
     let cfg = load_susfile(root)?;
     let api_key = std::env::var("OPENAI_API_KEY").context("missing OPENAI_API_KEY")?;
@@ -90,6 +116,7 @@ pub async fn handle_go(root: &Path) -> Result<()> {
         handles: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
 
+    log_event("Spawn main_agent");
     run_llm_agent(ctx.clone(), "main_agent", None).await?;
 
     // wait for spawned agents from this heartbeat
@@ -98,18 +125,31 @@ pub async fn handle_go(root: &Path) -> Result<()> {
         std::mem::take(&mut *handles)
     };
 
+    if !drained.is_empty() {
+        log_event(format!("Waiting for {} spawned agent(s)", drained.len()));
+    }
+
     for h in drained {
         match h.await {
             Ok(Ok(())) => {}
-            Ok(Err(err)) => eprintln!("spawned agent error: {err}"),
-            Err(err) => eprintln!("spawned task join error: {err}"),
+            Ok(Err(err)) => log_event(format!("spawned agent error: {err}")),
+            Err(err) => log_event(format!("spawned task join error: {err}")),
         }
     }
+
+    log_event("opensus go heartbeat complete");
 
     Ok(())
 }
 
 async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<String>) -> Result<()> {
+    let task_label = task_hint.clone();
+    if let Some(task_id) = task_label.as_deref() {
+        log_event(format!("{agent_name} started task {task_id}"));
+    } else {
+        log_event(format!("{agent_name} started"));
+    }
+
     let system_prompt = embedded_prompt(agent_name)?;
     let tools = tools_for_agent(agent_name);
 
@@ -144,10 +184,17 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
             let args_raw = tc["function"]["arguments"].as_str().unwrap_or("{}");
             let args: Value = serde_json::from_str(args_raw).unwrap_or_else(|_| json!({}));
 
+            log_event(format!("{agent_name} called tool {name}"));
             let tool_result = execute_tool_call(ctx.clone(), agent_name, name, args);
             let content = match tool_result {
-                Ok(v) => v,
-                Err(err) => format!("tool error: {err}"),
+                Ok(v) => {
+                    log_event(format!("{agent_name} called tool {name} .. COMPLETE"));
+                    v
+                }
+                Err(err) => {
+                    log_event(format!("{agent_name} called tool {name} .. ERROR: {err}"));
+                    format!("tool error: {err}")
+                }
             };
 
             messages.push(json!({
@@ -156,6 +203,12 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
                 "content": content
             }));
         }
+    }
+
+    if let Some(task_id) = task_label {
+        log_event(format!("{agent_name} finished task {task_id}"));
+    } else {
+        log_event(format!("{agent_name} finished"));
     }
 
     Ok(())
@@ -174,6 +227,7 @@ fn execute_tool_call(
                 .as_str()
                 .context("write_plan requires markdown")?;
             write_plan(&ctx.root, markdown)?;
+            log_event("Plan updated".to_string());
             Ok("ok".to_string())
         }
         "read_worker_count" => Ok(ctx.active_workers.load(Ordering::SeqCst).to_string()),
@@ -191,6 +245,7 @@ fn execute_tool_call(
             if agent == "worker_agent"
                 && ctx.active_workers.load(Ordering::SeqCst) >= ctx.cfg.max_agents_per_time
             {
+                log_event("worker capacity reached".to_string());
                 return Ok("worker capacity reached".to_string());
             }
 
@@ -203,6 +258,11 @@ fn execute_tool_call(
 
             let ctx_clone = ctx.clone();
             let agent_name = agent.to_string();
+            if let Some(id) = task_id.as_deref() {
+                log_event(format!("Spawn {agent} for task {id}"));
+            } else {
+                log_event(format!("Spawn {agent}"));
+            }
             let handle = tokio::spawn(async move {
                 let result = run_llm_agent(ctx_clone.clone(), &agent_name, task_id).await;
                 if agent_name == "worker_agent" {
@@ -224,11 +284,13 @@ fn execute_tool_call(
                 .find(|t| t.id == id)
                 .context("task not found")?;
             claim_task(&ctx.root, &task.id, &task.title)?;
+            log_event(format!("{caller_agent} claimed task {id}"));
             Ok("claimed".to_string())
         }
         "complete_task" => {
             let id = args["id"].as_str().context("complete_task requires id")?;
             complete_task(&ctx.root, id)?;
+            log_event(format!("{caller_agent} completed task {id}"));
             Ok("completed".to_string())
         }
         "add_note" => {
@@ -261,11 +323,13 @@ fn execute_tool_call(
 
 fn claim_task(root: &Path, task_id: &str, title: &str) -> Result<()> {
     update_task_status(root, task_id, TaskStatus::Pending)?;
+    log_event(format!("Plan updated (task {task_id} -> pending)"));
     ensure_task_note(root, task_id, title, "open")
 }
 
 fn complete_task(root: &Path, task_id: &str) -> Result<()> {
     update_task_status(root, task_id, TaskStatus::Complete)?;
+    log_event(format!("Plan updated (task {task_id} -> complete)"));
     set_note_state(root, task_id, "complete")
 }
 
@@ -281,6 +345,7 @@ fn ensure_task_note(root: &Path, task_id: &str, title: &str, state: &str) -> Res
     if !path.exists() {
         let body = format!("---\nstate: {state}\n---\n# Task: {title}\n## Tools\n\n## Notes\n");
         fs::write(path, body).context("failed to write task note")?;
+        log_event(format!("Task created at notes/{task_id}.md"));
     }
     Ok(())
 }
@@ -300,14 +365,18 @@ fn set_note_state(root: &Path, task_id: &str, state: &str) -> Result<()> {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n";
-    fs::write(path, replaced).context("failed to write note")
+    fs::write(path, replaced).context("failed to write note")?;
+    log_event(format!("Task {task_id} marked {state}"));
+    Ok(())
 }
 
 fn add_note(root: &Path, task_id: &str, note: &str) -> Result<()> {
     let path = root.join("notes").join(format!("{task_id}.md"));
     let mut content = fs::read_to_string(&path).context("failed to read note")?;
     content.push_str(&format!("- {note}\n"));
-    fs::write(path, content).context("failed to append note")
+    fs::write(path, content).context("failed to append note")?;
+    log_event(format!("Note appended to task {task_id}"));
+    Ok(())
 }
 
 fn write_if_missing(path: &Path, content: &str) -> Result<()> {
@@ -334,5 +403,40 @@ mod tests {
         mark_task_crashed(tmp.path(), "T001", "boom").expect("crash");
         let p = read_plan(tmp.path()).expect("read plan");
         assert!(p.contains("- [!] T001"));
+    }
+    #[test]
+    fn reset_keeps_brief_and_susfile_and_clears_runtime_artifacts() {
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "test-key");
+        }
+
+        let tmp = tempfile::tempdir().expect("tmp");
+        handle_init(tmp.path()).expect("init");
+
+        fs::write(tmp.path().join("brief.md"), "custom brief").expect("brief");
+        fs::write(
+            tmp.path().join("plan.md"),
+            "- [ ] T001 - Keep this?
+",
+        )
+        .expect("plan");
+        fs::write(tmp.path().join("notes").join("T001.md"), "note").expect("note");
+
+        handle_reset(tmp.path()).expect("reset");
+
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("brief.md")).expect("read brief"),
+            "custom brief"
+        );
+        assert!(tmp.path().join("susfile").exists());
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("plan.md")).expect("read plan"),
+            ""
+        );
+        assert!(tmp.path().join("notes").exists());
+        assert!(fs::read_dir(tmp.path().join("notes"))
+            .expect("read notes dir")
+            .next()
+            .is_none());
     }
 }

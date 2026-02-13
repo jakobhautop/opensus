@@ -14,4 +14,6 @@ pub enum Commands {
     Go,
     /// Initialize workspace files and prompts.
     Init,
+    /// Reset runtime artifacts while keeping brief and susfile.
+    Reset,
 }
