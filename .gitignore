@@ -1,0 +1,8 @@
+/target
+Cargo.lock
+.*.log
+susfile
+swarm.md
+plan.md
+report.md
+notes/
