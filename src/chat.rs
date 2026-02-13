@@ -37,7 +37,7 @@ fn tool_write_plan() -> Value {
 }
 
 fn tool_spawn_agent() -> Value {
-    json!({"type":"function","function":{"name":"spawn_agent","description":"Spawn an agent by name. For worker_agent include task_id.","parameters":{"type":"object","properties":{"name":{"type":"string"},"task_id":{"type":"string"}},"required":["name"]}}})
+    json!({"type":"function","function":{"name":"spawn_agent","description":"Spawn an agent by role name: worker, planner, or reporter. For worker include task_id.","parameters":{"type":"object","properties":{"name":{"type":"string","enum":["worker","planner","reporter"]},"task_id":{"type":"string"}},"required":["name"]}}})
 }
 
 pub async fn create_chat_completion(

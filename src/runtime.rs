@@ -17,6 +17,15 @@ const PLANNING_AGENT_PROMPT: &str = include_str!("../prompts/planning_agent.md")
 const WORKER_AGENT_PROMPT: &str = include_str!("../prompts/worker_agent.md");
 const REPORT_AGENT_PROMPT: &str = include_str!("../prompts/report_agent.md");
 
+fn map_spawn_role_to_agent(role: &str) -> Result<&'static str> {
+    match role {
+        "worker" => Ok("worker_agent"),
+        "planner" => Ok("planning_agent"),
+        "reporter" => Ok("report_agent"),
+        _ => bail!("spawn_agent.name must be one of: worker, planner, reporter"),
+    }
+}
+
 fn embedded_prompt(agent_name: &str) -> Result<&'static str> {
     match agent_name {
         "main_agent" => Ok(MAIN_AGENT_PROMPT),
@@ -176,7 +185,8 @@ fn execute_tool_call(
             if caller_agent != "main_agent" {
                 bail!("spawn_agent only allowed for main_agent");
             }
-            let agent = args["name"].as_str().context("spawn_agent requires name")?;
+            let role = args["name"].as_str().context("spawn_agent requires name")?;
+            let agent = map_spawn_role_to_agent(role)?;
             let task_id = args
                 .get("task_id")
                 .and_then(Value::as_str)
@@ -189,6 +199,9 @@ fn execute_tool_call(
             }
 
             if agent == "worker_agent" {
+                if task_id.is_none() {
+                    bail!("spawn_agent with name=worker requires task_id");
+                }
                 ctx.active_workers.fetch_add(1, Ordering::SeqCst);
             }
 
@@ -205,7 +218,7 @@ fn execute_tool_call(
                 .lock()
                 .expect("handles mutex poisoned")
                 .push(handle);
-            Ok(format!("spawned {agent}"))
+            Ok(format!("spawned {role}"))
         }
         "claim_task" => {
             let id = args["id"].as_str().context("claim_task requires id")?;
