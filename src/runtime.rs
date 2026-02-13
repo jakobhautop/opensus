@@ -12,6 +12,21 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 
+const MAIN_AGENT_PROMPT: &str = include_str!("../prompts/main_agent.md");
+const PLANNING_AGENT_PROMPT: &str = include_str!("../prompts/planning_agent.md");
+const WORKER_AGENT_PROMPT: &str = include_str!("../prompts/worker_agent.md");
+const REPORT_AGENT_PROMPT: &str = include_str!("../prompts/report_agent.md");
+
+fn embedded_prompt(agent_name: &str) -> Result<&'static str> {
+    match agent_name {
+        "main_agent" => Ok(MAIN_AGENT_PROMPT),
+        "planning_agent" => Ok(PLANNING_AGENT_PROMPT),
+        "worker_agent" => Ok(WORKER_AGENT_PROMPT),
+        "report_agent" => Ok(REPORT_AGENT_PROMPT),
+        _ => bail!("unknown agent: {agent_name}"),
+    }
+}
+
 use crate::{
     chat::{create_chat_completion, tools_for_agent},
     config::{default_susfile, load_susfile, Susfile},
@@ -46,24 +61,6 @@ pub fn handle_init(root: &Path) -> Result<()> {
     write_if_missing(
         &root.join("brief.md"),
         "# Brief\n\nDescribe assignment scope and goals for agents.\n",
-    )?;
-
-    fs::create_dir_all(root.join("prompts")).context("failed to create prompts/")?;
-    write_if_missing(
-        &root.join("prompts/main_agent.md"),
-        "# main_agent\nYou orchestrate. Read/write plan, spawn agents, and monitor worker concurrency.\n",
-    )?;
-    write_if_missing(
-        &root.join("prompts/planning_agent.md"),
-        "# planning_agent\nCreate/update plan.md from brief.md with concrete task IDs.\n",
-    )?;
-    write_if_missing(
-        &root.join("prompts/worker_agent.md"),
-        "# worker_agent\nClaim tasks, run tools, write notes, and complete/crash tasks.\n",
-    )?;
-    write_if_missing(
-        &root.join("prompts/report_agent.md"),
-        "# report_agent\nProduce report.md after all tasks are complete.\n",
     )?;
 
     Ok(())
@@ -103,9 +100,7 @@ pub async fn handle_go(root: &Path) -> Result<()> {
 }
 
 async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<String>) -> Result<()> {
-    let prompt_path = ctx.root.join("prompts").join(format!("{agent_name}.md"));
-    let system_prompt = fs::read_to_string(&prompt_path)
-        .with_context(|| format!("failed to read {}", prompt_path.display()))?;
+    let system_prompt = embedded_prompt(agent_name)?;
     let tools = tools_for_agent(agent_name);
 
     let brief = fs::read_to_string(ctx.root.join("brief.md")).unwrap_or_default();

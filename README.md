@@ -9,10 +9,14 @@ OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM work
 
 ## Prompt files
 
+Prompts are compiled into the binary from:
+
 - `prompts/main_agent.md`
 - `prompts/planning_agent.md`
 - `prompts/worker_agent.md`
 - `prompts/report_agent.md`
+
+Users do not edit runtime prompt files after build; `init` does not scaffold prompts.
 
 ## init scaffold
 
@@ -22,7 +26,6 @@ OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM work
 - `notes/`
 - empty `plan.md`
 - `brief.md`
-- prompt files under `prompts/`
 
 ## LLM runtime model
 
