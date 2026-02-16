@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
 
-pub fn tools_for_agent(agent: &str) -> Vec<Value> {
+use crate::config::Susfile;
+
+pub fn tools_for_agent(agent: &str, cfg: &Susfile) -> Vec<Value> {
     match agent {
         "main_agent" => vec![
             tool_no_args("read_plan", "Read plan.md"),
@@ -11,14 +13,41 @@ pub fn tools_for_agent(agent: &str) -> Vec<Value> {
             tool_no_args("read_worker_count", "Read current active worker count"),
         ],
         "planning_agent" => vec![tool_no_args("read_plan", "Read plan.md"), tool_write_plan()],
-        "worker_agent" => vec![
-            tool_no_args("read_plan", "Read plan.md"),
-            tool_single_id("claim_task", "Claim task and set to pending"),
-            tool_single_id("complete_task", "Mark task complete"),
-            json!({"type":"function","function":{"name":"add_note","description":"Append note text to notes/<task-id>.md","parameters":{"type":"object","properties":{"id":{"type":"string"},"note":{"type":"string"}},"required":["id","note"]}}}),
-            tool_no_args("nmap_verify", "Verify nmap installation"),
-            json!({"type":"function","function":{"name":"nmap_aggressive_scan","description":"Run nmap -A against an allowlisted IP","parameters":{"type":"object","properties":{"ip":{"type":"string"}},"required":["ip"]}}}),
-        ],
+        "worker_agent" => {
+            let mut tools = vec![
+                tool_no_args("read_plan", "Read plan.md"),
+                tool_single_id("claim_task", "Claim task and set to pending"),
+                tool_single_id("complete_task", "Mark task complete"),
+                json!({"type":"function","function":{"name":"add_note","description":"Append note text to notes/<task-id>.md","parameters":{"type":"object","properties":{"id":{"type":"string"},"note":{"type":"string"}},"required":["id","note"]}}}),
+            ];
+
+            for cli_tool in &cfg.tools.cli {
+                let mut properties = serde_json::Map::new();
+                let mut required = Vec::new();
+                for arg in &cli_tool.args {
+                    properties.insert(
+                        arg.name.clone(),
+                        json!({"type": "string", "description": arg.description}),
+                    );
+                    required.push(arg.name.clone());
+                }
+
+                tools.push(json!({
+                    "type": "function",
+                    "function": {
+                        "name": cli_tool.name,
+                        "description": cli_tool.description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required
+                        }
+                    }
+                }));
+            }
+
+            tools
+        }
         "report_agent" => vec![tool_no_args("read_plan", "Read plan.md")],
         _ => vec![],
     }

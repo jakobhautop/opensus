@@ -28,6 +28,34 @@ Users do not edit runtime prompt files after build; `init` does not scaffold pro
 - empty `plan.md`
 - `brief.md`
 
+## Susfile CLI tools
+
+`susfile` now defines worker CLI tooling under `tools.cli`. Each tool includes:
+
+- `name` (function name exposed to worker tool calls)
+- `description` (short natural-language behavior)
+- `command` (CLI template, for example `nmap -A <target>`)
+- `args` (argument definitions used to map model-provided parameters into command placeholders)
+
+Example:
+
+```json
+{
+  "tools": {
+    "cli": [
+      {
+        "name": "nmap_targeted_scan",
+        "description": "Run nmap aggressive scan",
+        "command": "nmap -A <target>",
+        "args": [
+          {"name": "target", "description": "Host or IP"}
+        ]
+      }
+    ]
+  }
+}
+```
+
 ## LLM runtime model
 
 `opensus go` invokes `main_agent` via OpenAI Chat Completions and provides tool definitions in the request. Agents decide tool usage themselves. OpenSus executes returned tool calls and feeds results back to the LLM until the agent completes.

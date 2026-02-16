@@ -13,12 +13,21 @@ pub struct Susfile {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ToolsConfig {
-    pub nmap: NmapConfig,
+    pub cli: Vec<CliToolConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct NmapConfig {
-    pub ips: Vec<String>,
+pub struct CliToolConfig {
+    pub name: String,
+    pub description: String,
+    pub command: String,
+    pub args: Vec<CliArgConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CliArgConfig {
+    pub name: String,
+    pub description: String,
 }
 
 pub fn load_susfile(root: &Path) -> Result<Susfile> {
@@ -38,10 +47,95 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
     if cfg.max_agents_per_time == 0 {
         bail!("susfile.max_agents_per_time must be > 0");
     }
-    if cfg.tools.nmap.ips.is_empty() {
-        bail!("susfile.tools.nmap.ips must include at least one IP");
+    if cfg.tools.cli.is_empty() {
+        bail!("susfile.tools.cli must include at least one CLI tool definition");
     }
+
+    let mut seen_tool_names = std::collections::HashSet::new();
+    let reserved_tool_names = [
+        "read_plan",
+        "write_plan",
+        "spawn_agent",
+        "read_worker_count",
+        "claim_task",
+        "complete_task",
+        "add_note",
+    ];
+
+    for tool in &cfg.tools.cli {
+        let tool_name = tool.name.trim();
+        if tool_name.is_empty() {
+            bail!("each susfile.tools.cli definition requires a non-empty name");
+        }
+        if reserved_tool_names.contains(&tool_name) {
+            bail!(
+                "susfile.tools.cli name `{tool_name}` collides with a reserved runtime tool name"
+            );
+        }
+        if !seen_tool_names.insert(tool_name.to_string()) {
+            bail!("duplicate susfile.tools.cli name `{tool_name}`");
+        }
+
+        if tool.description.trim().is_empty() {
+            bail!("susfile.tools.cli `{tool_name}` requires a non-empty description");
+        }
+        if tool.command.trim().is_empty() {
+            bail!("susfile.tools.cli `{tool_name}` requires a non-empty command");
+        }
+
+        let placeholders = extract_placeholders(&tool.command);
+        let mut seen_args = std::collections::HashSet::new();
+        for arg in &tool.args {
+            let arg_name = arg.name.trim();
+            if arg_name.is_empty() {
+                bail!("susfile.tools.cli `{tool_name}` has an argument with empty name");
+            }
+            if !seen_args.insert(arg_name.to_string()) {
+                bail!("susfile.tools.cli `{tool_name}` has duplicate argument `{arg_name}`");
+            }
+            if arg.description.trim().is_empty() {
+                bail!(
+                    "susfile.tools.cli `{tool_name}` argument `{arg_name}` requires a description"
+                );
+            }
+            if !placeholders.contains(arg_name) {
+                bail!(
+                    "susfile.tools.cli `{tool_name}` command must include placeholder <{arg_name}>"
+                );
+            }
+        }
+
+        for placeholder in placeholders {
+            if !seen_args.contains(&placeholder) {
+                bail!(
+                    "susfile.tools.cli `{tool_name}` command placeholder <{placeholder}> has no matching args entry"
+                );
+            }
+        }
+    }
+
     Ok(())
+}
+
+fn extract_placeholders(command: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let bytes = command.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            if let Some(rel_end) = command[i + 1..].find('>') {
+                let end = i + 1 + rel_end;
+                let token = command[i + 1..end].trim();
+                if !token.is_empty() {
+                    out.insert(token.to_string());
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 pub fn default_susfile() -> Susfile {
@@ -50,9 +144,35 @@ pub fn default_susfile() -> Susfile {
         model: "gpt-4.1".to_string(),
         max_agents_per_time: 2,
         tools: ToolsConfig {
-            nmap: NmapConfig {
-                ips: vec!["127.0.0.1".to_string()],
-            },
+            cli: vec![CliToolConfig {
+                name: "nmap_targeted_scan".to_string(),
+                description: "Run an nmap aggressive scan against a target host".to_string(),
+                command: "nmap -A <target>".to_string(),
+                args: vec![CliArgConfig {
+                    name: "target".to_string(),
+                    description: "Target hostname or IP to scan".to_string(),
+                }],
+            }],
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_susfile_has_cli_tools() {
+        let cfg = default_susfile();
+        validate_susfile(&cfg).expect("default config should validate");
+        assert!(!cfg.tools.cli.is_empty());
+    }
+
+    #[test]
+    fn validation_fails_when_placeholder_has_no_arg_mapping() {
+        let mut cfg = default_susfile();
+        cfg.tools.cli[0].command = "nmap -A <target> <extra>".to_string();
+        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        assert!(err.to_string().contains("<extra>"));
     }
 }
