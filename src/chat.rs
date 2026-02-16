@@ -12,13 +12,20 @@ pub fn tools_for_agent(agent: &str, cfg: &Susfile) -> Vec<Value> {
             tool_spawn_agent(),
             tool_no_args("read_worker_count", "Read current active worker count"),
         ],
-        "planning_agent" => vec![tool_no_args("read_plan", "Read plan.md"), tool_write_plan()],
+        "planning_agent" => vec![
+            tool_no_args("read_plan", "Read plan.md"),
+            tool_write_plan(),
+            json!({"type":"function","function":{"name":"cve_search","description":"Search CVE database by query text and return raw records","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}}),
+            json!({"type":"function","function":{"name":"cve_show","description":"Get one CVE and affected products by CVE ID","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}}),
+        ],
         "worker_agent" => {
             let mut tools = vec![
                 tool_no_args("read_plan", "Read plan.md"),
                 tool_single_id("claim_task", "Claim task and set to pending"),
                 tool_single_id("complete_task", "Mark task complete"),
                 json!({"type":"function","function":{"name":"add_note","description":"Append note text to notes/<task-id>.md","parameters":{"type":"object","properties":{"id":{"type":"string"},"note":{"type":"string"}},"required":["id","note"]}}}),
+                json!({"type":"function","function":{"name":"cve_search","description":"Search CVE database by query text and return raw records","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}}),
+                json!({"type":"function","function":{"name":"cve_show","description":"Get one CVE and affected products by CVE ID","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}}),
             ];
 
             for cli_tool in &cfg.tools.cli {

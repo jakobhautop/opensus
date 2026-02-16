@@ -7,6 +7,9 @@ OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM work
 - `opensus init`
 - `opensus go`
 - `opensus reset`
+- `opensus cve search <query>`
+- `opensus cve show <CVE-ID>`
+- `opensus update-cve-db`
 
 ## Prompt files
 
@@ -91,3 +94,12 @@ Example:
 ## reset runtime artifacts
 
 `opensus reset` keeps `brief.md` and `susfile`, but clears runtime progress by emptying `plan.md` and recreating an empty `notes/` directory.
+
+
+## CVE database
+
+Release builds ship with an embedded CVE SQLite snapshot and extract it on `opensus init` into `~/.opensus/cve.db`. If a local/dev build has no embedded snapshot, run `opensus update-cve-db` once to create it locally.
+
+- `opensus cve search <query>` returns at most 10 JSON rows using both description full-text match and product/vendor matching.
+- `opensus cve show <CVE-ID>` returns one CVE JSON record plus affected products.
+- `opensus update-cve-db` clones `https://github.com/CVEProject/cvelistV5` and rebuilds the local DB.
