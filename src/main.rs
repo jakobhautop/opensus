@@ -8,7 +8,7 @@ mod tools;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, Commands, CveCommands};
+use cli::{Cli, Commands, CveCommands, CveDbCommands};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -31,10 +31,12 @@ async fn main() -> Result<()> {
                 Ok(())
             }
         },
-        Commands::UpdateCveDb => {
-            let path = cve::rebuild_local_database()?;
-            println!("{}", path.display());
-            Ok(())
-        }
+        Commands::CveDb { command } => match command {
+            CveDbCommands::Install => {
+                let path = cve::install_local_database_from_releases().await?;
+                println!("{}", path.display());
+                Ok(())
+            }
+        },
     }
 }

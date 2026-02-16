@@ -99,7 +99,12 @@ pub fn handle_init(root: &Path) -> Result<()> {
         bail!("OPENAI_API_KEY is required when susfile.api=openai");
     }
 
-    cve::ensure_local_db().context("failed to initialize embedded CVE database")?;
+    if let Err(err) = cve::ensure_local_db() {
+        log_event(format!(
+            "CVE database not installed yet ({}). Run `opensus cvedb install` to enable CVE search.",
+            err
+        ));
+    }
 
     fs::create_dir_all(root.join("notes")).context("failed to create notes/")?;
     log_event("Ensured notes/ exists");
@@ -475,7 +480,6 @@ mod tests {
         let p = read_plan(tmp.path()).expect("read plan");
         assert!(p.contains("- [!] T001"));
     }
-    #[cfg(embedded_cve_db)]
     #[test]
     fn reset_keeps_brief_and_susfile_and_clears_runtime_artifacts() {
         unsafe {

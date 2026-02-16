@@ -2,7 +2,6 @@
 name = "opensus"
 version = "0.1.0"
 edition = "2021"
-build = "build.rs"
 
 [dependencies]
 anyhow = "1"
@@ -14,5 +13,5 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
-zstd = "0.13"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 walkdir = "2"

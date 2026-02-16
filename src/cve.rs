@@ -1,21 +1,20 @@
 use std::{
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
-    process::Command,
 };
 
-#[cfg(embedded_cve_db)]
-use std::io::Cursor;
-
 use anyhow::{bail, Context, Result};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use rusqlite::{params, Connection};
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use walkdir::WalkDir;
+use zip::ZipArchive;
 
-const CVE_LIST_REPO: &str = "https://github.com/CVEProject/cvelistV5";
-#[cfg(embedded_cve_db)]
-const EMBEDDED_DB: &[u8] = include_bytes!("../assets/cve.db.zst");
+const CVE_RELEASES_LATEST_URL: &str =
+    "https://api.github.com/repos/CVEProject/cvelistV5/releases/latest";
 const MAX_RESULTS: usize = 10;
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,50 +49,38 @@ struct ParsedCve {
     products: Vec<ProductRow>,
 }
 
+#[derive(Debug, Deserialize)]
+struct GitHubRelease {
+    assets: Vec<GitHubAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
 pub fn ensure_local_db() -> Result<PathBuf> {
     let db_path = local_db_path()?;
     if db_path.exists() {
         return Ok(db_path);
     }
 
-    let parent = db_path
-        .parent()
-        .context("failed to resolve CVE database parent directory")?;
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-
-    #[cfg(embedded_cve_db)]
-    {
-        let db_bytes = decompress_embedded_db()?;
-        fs::write(&db_path, db_bytes)
-            .with_context(|| format!("failed to write {}", db_path.display()))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&db_path, fs::Permissions::from_mode(0o600))
-                .with_context(|| format!("failed to set permissions on {}", db_path.display()))?;
-        }
-
-        return Ok(db_path);
-    }
-
-    #[cfg(not(embedded_cve_db))]
-    {
-        bail!(
-            "this build does not contain an embedded CVE DB snapshot; run `opensus update-cve-db`"
-        );
-    }
+    bail!(
+        "CVE database does not exist at {}. Run `opensus cvedb install` first.",
+        db_path.display()
+    )
 }
 
-pub fn rebuild_local_database() -> Result<PathBuf> {
+pub async fn install_local_database_from_releases() -> Result<PathBuf> {
     let tmp = tempfile::tempdir().context("failed to create temporary directory")?;
-    let cloned = tmp.path().join("cvelistV5");
+    let zip_path = tmp.path().join("cvelistV5-latest.zip");
+    let extracted_path = tmp.path().join("cvelistV5");
     let db_path = tmp.path().join("cve.db");
-    let db_zst_path = tmp.path().join("cve.db.zst");
 
-    clone_repo(&cloned)?;
-    build_sqlite_from_repo(&cloned, &db_path)?;
-    compress_db(&db_path, &db_zst_path)?;
+    download_latest_release_zip(&zip_path).await?;
+    extract_zip_archive(&zip_path, &extracted_path)?;
+    build_sqlite_from_repo(&extracted_path, &db_path)?;
 
     let target = local_db_path()?;
     let target_parent = target
@@ -111,7 +98,7 @@ pub fn search_local_db(query: &str) -> Result<Vec<CveRow>> {
     let db_path = local_db_path()?;
     if !db_path.exists() {
         bail!(
-            "CVE database does not exist at {}. Run `opensus init` first.",
+            "CVE database does not exist at {}. Run `opensus cvedb install` first.",
             db_path.display()
         );
     }
@@ -154,7 +141,7 @@ pub fn show_local_db(id: &str) -> Result<CveShowRow> {
     let db_path = local_db_path()?;
     if !db_path.exists() {
         bail!(
-            "CVE database does not exist at {}. Run `opensus init` first.",
+            "CVE database does not exist at {}. Run `opensus cvedb install` first.",
             db_path.display()
         );
     }
@@ -197,37 +184,6 @@ pub fn show_local_db(id: &str) -> Result<CveShowRow> {
         .context("failed to collect product rows")?;
 
     Ok(CveShowRow { cve, products })
-}
-
-pub fn build_snapshot_to(output_path: &Path) -> Result<()> {
-    let tmp = tempfile::tempdir().context("failed to create temporary directory")?;
-    let cloned = tmp.path().join("cvelistV5");
-    let db_path = tmp.path().join("cve.db");
-
-    clone_repo(&cloned)?;
-    build_sqlite_from_repo(&cloned, &db_path)?;
-    compress_db(&db_path, output_path)?;
-    Ok(())
-}
-
-fn clone_repo(target_dir: &Path) -> Result<()> {
-    let output = Command::new("git")
-        .args([
-            "clone",
-            CVE_LIST_REPO,
-            target_dir.to_string_lossy().as_ref(),
-        ])
-        .output()
-        .context("failed to execute git clone")?;
-
-    if !output.status.success() {
-        bail!(
-            "git clone failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    Ok(())
 }
 
 fn build_sqlite_from_repo(repo_path: &Path, db_path: &Path) -> Result<()> {
@@ -317,22 +273,98 @@ fn build_sqlite_from_repo(repo_path: &Path, db_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compress_db(db_path: &Path, output_path: &Path) -> Result<()> {
-    let input =
-        fs::File::open(db_path).with_context(|| format!("failed to open {}", db_path.display()))?;
-    let compressed = zstd::stream::encode_all(input, 19).context("zstd compression failed")?;
-    fs::write(output_path, compressed)
+async fn download_latest_release_zip(output_path: &Path) -> Result<()> {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static("opensus-cvedb-installer"),
+    );
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github+json"),
+    );
+
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .context("failed to construct GitHub API client")?;
+
+    let release = client
+        .get(CVE_RELEASES_LATEST_URL)
+        .send()
+        .await
+        .context("failed to query latest cvelistV5 release")?
+        .error_for_status()
+        .context("latest cvelistV5 release request failed")?
+        .json::<GitHubRelease>()
+        .await
+        .context("failed to decode GitHub release response")?;
+
+    let asset = select_release_asset(&release.assets)
+        .context("failed to locate release zip asset for full cvelistV5 data")?;
+
+    let zip_bytes = client
+        .get(&asset.browser_download_url)
+        .send()
+        .await
+        .with_context(|| format!("failed to download release asset {}", asset.name))?
+        .error_for_status()
+        .with_context(|| format!("release asset request failed for {}", asset.name))?
+        .bytes()
+        .await
+        .with_context(|| format!("failed to read release asset bytes for {}", asset.name))?;
+
+    fs::write(output_path, zip_bytes)
         .with_context(|| format!("failed to write {}", output_path.display()))?;
     Ok(())
 }
 
-#[cfg(embedded_cve_db)]
-fn decompress_embedded_db() -> Result<Vec<u8>> {
-    match zstd::stream::decode_all(Cursor::new(EMBEDDED_DB)) {
-        Ok(bytes) => Ok(bytes),
-        Err(_) if EMBEDDED_DB.starts_with(b"SQLite format 3\0") => Ok(EMBEDDED_DB.to_vec()),
-        Err(err) => Err(err).context("failed to decompress embedded CVE DB"),
+fn select_release_asset(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
+    assets
+        .iter()
+        .find(|asset| {
+            asset.name.contains("all_CVEs")
+                && asset.name.ends_with(".zip")
+                && !asset.name.eq_ignore_ascii_case("source code (zip)")
+        })
+        .or_else(|| {
+            assets.iter().find(|asset| {
+                asset.name.ends_with(".zip")
+                    && !asset.name.eq_ignore_ascii_case("source code (zip)")
+            })
+        })
+}
+
+fn extract_zip_archive(zip_path: &Path, out_dir: &Path) -> Result<()> {
+    fs::create_dir_all(out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+    let zip_data =
+        fs::read(zip_path).with_context(|| format!("failed to read {}", zip_path.display()))?;
+    let reader = Cursor::new(zip_data);
+    let mut archive = ZipArchive::new(reader).context("failed to open zip archive")?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).context("failed to read zip entry")?;
+        let out_path = out_dir.join(file.mangled_name());
+
+        if file.name().ends_with('/') {
+            fs::create_dir_all(&out_path)
+                .with_context(|| format!("failed to create directory {}", out_path.display()))?;
+            continue;
+        }
+
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory {}", parent.display()))?;
+        }
+
+        let mut outfile = fs::File::create(&out_path)
+            .with_context(|| format!("failed to create {}", out_path.display()))?;
+        std::io::copy(&mut file, &mut outfile)
+            .with_context(|| format!("failed to extract {}", out_path.display()))?;
     }
+
+    Ok(())
 }
 
 fn open_readonly_connection(db_path: &Path) -> Result<Connection> {
@@ -483,6 +515,23 @@ fn extract_cvss_score(v: &Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn select_release_asset_prefers_all_cves_zip() {
+        let assets = vec![
+            GitHubAsset {
+                name: "Source code (zip)".to_string(),
+                browser_download_url: "https://example.invalid/source.zip".to_string(),
+            },
+            GitHubAsset {
+                name: "2026-02-16_all_CVEs_at_midnight.zip.zip".to_string(),
+                browser_download_url: "https://example.invalid/all.zip".to_string(),
+            },
+        ];
+
+        let selected = select_release_asset(&assets).expect("asset should be found");
+        assert_eq!(selected.name, "2026-02-16_all_CVEs_at_midnight.zip.zip");
+    }
 
     #[test]
     fn parse_filters_rejected_records() {
