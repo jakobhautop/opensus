@@ -56,6 +56,34 @@ Example:
 }
 ```
 
+## Agent-specific custom prompts
+
+`susfile` can optionally specify per-agent prompt files. When set, OpenSus reads each file and injects its content into the corresponding embedded prompt template inside:
+
+```md
+<User input>
+...custom prompt file content...
+</User input>
+```
+
+Supported keys:
+
+- `agents.worker.prompt`
+- `agents.reporter.prompt`
+- `agents.planner.prompt`
+
+Example:
+
+```json
+{
+  "agents": {
+    "worker": {"prompt": "prompts/worker.custom.md"},
+    "reporter": {"prompt": "prompts/reporter.custom.md"},
+    "planner": {"prompt": "prompts/planner.custom.md"}
+  }
+}
+```
+
 ## LLM runtime model
 
 `opensus go` invokes `main_agent` via OpenAI Chat Completions and provides tool definitions in the request. Agents decide tool usage themselves. OpenSus executes returned tool calls and feeds results back to the LLM until the agent completes.
