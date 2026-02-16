@@ -16,13 +16,17 @@ pub enum Commands {
     Init,
     /// Reset runtime artifacts while keeping brief and susfile.
     Reset,
-    /// Search local embedded CVE database.
+    /// Search local CVE database.
     Cve {
         #[command(subcommand)]
         command: CveCommands,
     },
-    /// Download latest CVE list and rebuild local CVE database.
-    UpdateCveDb,
+    /// Install and manage the local CVE database.
+    #[command(name = "cvedb")]
+    CveDb {
+        #[command(subcommand)]
+        command: CveDbCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -31,4 +35,10 @@ pub enum CveCommands {
     Search { query: String },
     /// Show a CVE entry with matching products.
     Show { id: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CveDbCommands {
+    /// Download latest cvelistV5 release snapshot and rebuild local CVE database.
+    Install,
 }
