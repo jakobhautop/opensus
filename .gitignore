@@ -1,8 +1,2 @@
 /target
-Cargo.lock
-.*.log
-susfile
-plan.md
-report.md
-notes/
-brief.md
+/assets/*.zst

@@ -24,6 +24,10 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
+      - name: Build CVE snapshot
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        run: cargo run --release --bin cve-db-builder -- assets/cve.db.zst
+
       - name: Build release (ARM64)
         run: cargo build --release --target ${{ env.TARGET }}
 

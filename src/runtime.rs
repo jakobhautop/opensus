@@ -71,6 +71,7 @@ fn render_agent_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<S
 use crate::{
     chat::{create_chat_completion, tools_for_agent},
     config::{default_susfile, load_susfile, Susfile},
+    cve,
     plan::{parse_tasks, read_plan, update_task_status, write_plan, TaskStatus},
     tools::run_cli_tool,
 };
@@ -97,6 +98,8 @@ pub fn handle_init(root: &Path) -> Result<()> {
     if loaded.api.eq_ignore_ascii_case("openai") && std::env::var("OPENAI_API_KEY").is_err() {
         bail!("OPENAI_API_KEY is required when susfile.api=openai");
     }
+
+    cve::ensure_local_db().context("failed to initialize embedded CVE database")?;
 
     fs::create_dir_all(root.join("notes")).context("failed to create notes/")?;
     log_event("Ensured notes/ exists");
@@ -326,6 +329,18 @@ fn execute_tool_call(
             add_note(&ctx.root, id, note)?;
             Ok("noted".to_string())
         }
+        "cve_search" => {
+            let query = args["query"]
+                .as_str()
+                .context("cve_search requires query")?;
+            let rows = cve::search_local_db(query)?;
+            Ok(serde_json::to_string(&rows).context("failed to serialize cve_search rows")?)
+        }
+        "cve_show" => {
+            let id = args["id"].as_str().context("cve_show requires id")?;
+            let row = cve::show_local_db(id)?;
+            Ok(serde_json::to_string(&row).context("failed to serialize cve_show row")?)
+        }
         _ => execute_configured_cli_tool(&ctx.cfg, name, &args),
     }
 }
@@ -460,6 +475,7 @@ mod tests {
         let p = read_plan(tmp.path()).expect("read plan");
         assert!(p.contains("- [!] T001"));
     }
+    #[cfg(embedded_cve_db)]
     #[test]
     fn reset_keeps_brief_and_susfile_and_clears_runtime_artifacts() {
         unsafe {
@@ -495,6 +511,7 @@ mod tests {
             .next()
             .is_none());
     }
+
     #[test]
     fn build_system_prompt_injects_custom_user_prompt() {
         let tmp = tempfile::tempdir().expect("tmp");
