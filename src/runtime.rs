@@ -45,7 +45,7 @@ use crate::{
     chat::{create_chat_completion, tools_for_agent},
     config::{default_susfile, load_susfile, Susfile},
     plan::{parse_tasks, read_plan, update_task_status, write_plan, TaskStatus},
-    tools::{nmap_scan_aggressive, nmap_verify},
+    tools::run_cli_tool,
 };
 
 #[derive(Clone)]
@@ -150,8 +150,8 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
         log_event(format!("{agent_name} started"));
     }
 
-    let system_prompt = embedded_prompt(agent_name)?;
-    let tools = tools_for_agent(agent_name);
+    let system_prompt = build_system_prompt(&ctx.cfg, agent_name)?;
+    let tools = tools_for_agent(agent_name, &ctx.cfg);
 
     let brief = fs::read_to_string(ctx.root.join("brief.md")).unwrap_or_default();
     let user_task = task_hint.unwrap_or_else(|| format!("{}{}", HEARTBEAT_PROMPT, brief));
@@ -299,26 +299,55 @@ fn execute_tool_call(
             add_note(&ctx.root, id, note)?;
             Ok("noted".to_string())
         }
-        "nmap_verify" => {
-            let (stdin, stdout, stderr) = nmap_verify()?;
-            Ok(format!(
-                "stdin:\n{stdin}\nstdout:\n{stdout}\nstderr:\n{stderr}"
-            ))
-        }
-        "nmap_aggressive_scan" => {
-            let ip = args["ip"]
-                .as_str()
-                .context("nmap_aggressive_scan requires ip")?;
-            if !ctx.cfg.tools.nmap.ips.iter().any(|allowed| allowed == ip) {
-                bail!("ip not allowlisted in susfile.tools.nmap.ips");
-            }
-            let (stdin, stdout, stderr) = nmap_scan_aggressive(ip)?;
-            Ok(format!(
-                "stdin:\n{stdin}\nstdout:\n{stdout}\nstderr:\n{stderr}"
-            ))
-        }
-        _ => bail!("unknown tool: {name}"),
+        _ => execute_configured_cli_tool(&ctx.cfg, name, &args),
     }
+}
+
+fn build_system_prompt(cfg: &Susfile, agent_name: &str) -> Result<String> {
+    let base = embedded_prompt(agent_name)?;
+    if agent_name != "planning_agent" {
+        return Ok(base.to_string());
+    }
+
+    let mut tools_list = String::new();
+    for tool in &cfg.tools.cli {
+        let arg_list = tool
+            .args
+            .iter()
+            .map(|arg| format!("{}: {}", arg.name, arg.description))
+            .collect::<Vec<_>>()
+            .join(", ");
+        tools_list.push_str(&format!(
+            "- {}: {} (command: {}; args: {})\n",
+            tool.name, tool.description, tool.command, arg_list
+        ));
+    }
+
+    Ok(format!(
+        "{base}\n\nAvailable worker CLI tools from susfile:\n{tools_list}"
+    ))
+}
+
+fn execute_configured_cli_tool(cfg: &Susfile, name: &str, args: &Value) -> Result<String> {
+    let cli_tool = cfg
+        .tools
+        .cli
+        .iter()
+        .find(|tool| tool.name == name)
+        .with_context(|| format!("unknown tool: {name}"))?;
+
+    let mut mapped_args = std::collections::HashMap::new();
+    for arg in &cli_tool.args {
+        let value = args[arg.name.as_str()]
+            .as_str()
+            .with_context(|| format!("{} requires {}", name, arg.name))?;
+        mapped_args.insert(arg.name.clone(), value.to_string());
+    }
+
+    let (stdin, stdout, stderr) = run_cli_tool(cli_tool, &mapped_args)?;
+    Ok(format!(
+        "stdin:\n{stdin}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    ))
 }
 
 fn claim_task(root: &Path, task_id: &str, title: &str) -> Result<()> {
