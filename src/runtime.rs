@@ -41,6 +41,33 @@ fn embedded_prompt(agent_name: &str) -> Result<&'static str> {
     }
 }
 
+fn role_custom_prompt_path(cfg: &Susfile, agent_name: &str) -> Option<String> {
+    let agents = cfg.agents.as_ref()?;
+    match agent_name {
+        "worker_agent" => agents.worker.as_ref().map(|c| c.prompt.clone()),
+        "planning_agent" => agents.planner.as_ref().map(|c| c.prompt.clone()),
+        "report_agent" => agents.reporter.as_ref().map(|c| c.prompt.clone()),
+        _ => None,
+    }
+}
+
+fn render_agent_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<String> {
+    let base = embedded_prompt(agent_name)?;
+    let custom_prompt = if let Some(path) = role_custom_prompt_path(cfg, agent_name) {
+        let prompt_path = root.join(path);
+        fs::read_to_string(&prompt_path).with_context(|| {
+            format!(
+                "failed to read custom prompt file {}",
+                prompt_path.display()
+            )
+        })?
+    } else {
+        String::new()
+    };
+
+    Ok(base.replace("{{USER_INPUT}}", &custom_prompt))
+}
+
 use crate::{
     chat::{create_chat_completion, tools_for_agent},
     config::{default_susfile, load_susfile, Susfile},
@@ -150,7 +177,7 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
         log_event(format!("{agent_name} started"));
     }
 
-    let system_prompt = build_system_prompt(&ctx.cfg, agent_name)?;
+    let system_prompt = build_system_prompt(&ctx.cfg, &ctx.root, agent_name)?;
     let tools = tools_for_agent(agent_name, &ctx.cfg);
 
     let brief = fs::read_to_string(ctx.root.join("brief.md")).unwrap_or_default();
@@ -303,8 +330,8 @@ fn execute_tool_call(
     }
 }
 
-fn build_system_prompt(cfg: &Susfile, agent_name: &str) -> Result<String> {
-    let base = embedded_prompt(agent_name)?;
+fn build_system_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<String> {
+    let base = render_agent_prompt(cfg, root, agent_name)?;
     if agent_name != "planning_agent" {
         return Ok(base.to_string());
     }
@@ -467,5 +494,31 @@ mod tests {
             .expect("read notes dir")
             .next()
             .is_none());
+    }
+    #[test]
+    fn build_system_prompt_injects_custom_user_prompt() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::write(
+            tmp.path().join("worker-extra.md"),
+            "Focus only on web targets.",
+        )
+        .expect("prompt");
+
+        let mut cfg = default_susfile();
+        cfg.agents = Some(crate::config::AgentsConfig {
+            worker: Some(crate::config::AgentPromptConfig {
+                prompt: "worker-extra.md".to_string(),
+            }),
+            reporter: None,
+            planner: None,
+        });
+
+        let rendered = build_system_prompt(&cfg, tmp.path(), "worker_agent")
+            .expect("system prompt should render");
+
+        assert!(rendered.contains("<User input>"));
+        assert!(rendered.contains("Focus only on web targets."));
+        assert!(rendered.contains("</User input>"));
+        assert!(!rendered.contains("{{USER_INPUT}}"));
     }
 }

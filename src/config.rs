@@ -9,6 +9,23 @@ pub struct Susfile {
     pub model: String,
     pub max_agents_per_time: usize,
     pub tools: ToolsConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents: Option<AgentsConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<AgentPromptConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reporter: Option<AgentPromptConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planner: Option<AgentPromptConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentPromptConfig {
+    pub prompt: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -62,6 +79,19 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
         "add_note",
     ];
 
+    if let Some(agents) = cfg.agents.as_ref() {
+        for (role, prompt_cfg) in [
+            ("worker", agents.worker.as_ref()),
+            ("reporter", agents.reporter.as_ref()),
+            ("planner", agents.planner.as_ref()),
+        ] {
+            if let Some(prompt_cfg) = prompt_cfg {
+                if prompt_cfg.prompt.trim().is_empty() {
+                    bail!("susfile.agents.{role}.prompt must not be empty");
+                }
+            }
+        }
+    }
     for tool in &cfg.tools.cli {
         let tool_name = tool.name.trim();
         if tool_name.is_empty() {
@@ -154,6 +184,7 @@ pub fn default_susfile() -> Susfile {
                 }],
             }],
         },
+        agents: None,
     }
 }
 
@@ -174,5 +205,22 @@ mod tests {
         cfg.tools.cli[0].command = "nmap -A <target> <extra>".to_string();
         let err = validate_susfile(&cfg).expect_err("expected validation error");
         assert!(err.to_string().contains("<extra>"));
+    }
+
+    #[test]
+    fn validation_fails_for_empty_agent_prompt_path() {
+        let mut cfg = default_susfile();
+        cfg.agents = Some(AgentsConfig {
+            worker: Some(AgentPromptConfig {
+                prompt: "   ".to_string(),
+            }),
+            reporter: None,
+            planner: None,
+        });
+
+        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        assert!(err
+            .to_string()
+            .contains("susfile.agents.worker.prompt must not be empty"));
     }
 }
