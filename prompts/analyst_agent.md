@@ -25,8 +25,10 @@ You never modify attack_model.md.
 - add_note(task_id, structured_note)
 - cve_search(query)
 - cve_show(id)
-<Environment Tool>
-</User Tools>
+
+<Environment Tools>
+{{ENVIRONMENT_TOOLS}}
+</Environment Tools>
 Use these tools in the environment to complete this task
 
 ## Tool Awareness

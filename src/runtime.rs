@@ -65,7 +65,9 @@ fn render_agent_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<S
         String::new()
     };
 
-    Ok(base.replace("{{USER_INPUT}}", &custom_prompt))
+    Ok(base
+        .replace("{{USER_INPUT}}", &custom_prompt)
+        .replace("{{HEARTBEAT_MESSAGE}}", HEARTBEAT_PROMPT))
 }
 
 use crate::{
@@ -117,6 +119,8 @@ pub fn handle_init(root: &Path) -> Result<()> {
         "# Brief\n\nDescribe assignment scope and goals for agents.\n",
     )?;
     log_event("Ensured brief.md exists");
+    write_if_missing(&root.join("attack_model.md"), "")?;
+    log_event("Ensured attack_model.md exists");
 
     Ok(())
 }
@@ -282,60 +286,48 @@ fn execute_tool_call(
 ) -> Result<String> {
     match name {
         "read_plan" => Ok(read_plan(&ctx.root)?),
-        "write_plan" => {
-            let markdown = args["markdown"]
+        "update_plan" | "write_plan" => {
+            let markdown = args["updated_markdown"]
                 .as_str()
-                .context("write_plan requires markdown")?;
+                .or_else(|| args["markdown"].as_str())
+                .context("update_plan requires updated_markdown")?;
             write_plan(&ctx.root, markdown)?;
             log_event("Plan updated".to_string());
             Ok("ok".to_string())
         }
-        "read_analyst_count" => Ok(ctx.active_analysts.load(Ordering::SeqCst).to_string()),
+        "read_note" => {
+            let id = args["id"].as_str().context("read_note requires id")?;
+            Ok(
+                fs::read_to_string(ctx.root.join("notes").join(format!("{id}.md")))
+                    .with_context(|| format!("failed to read notes/{id}.md"))?,
+            )
+        }
+        "read_attack_model" => Ok(read_attack_model(&ctx.root)?),
+        "update_attack_model" => {
+            let markdown = args["updated_model"]
+                .as_str()
+                .context("update_attack_model requires updated_model")?;
+            write_attack_model(&ctx.root, markdown)?;
+            log_event("Attack model updated".to_string());
+            Ok("ok".to_string())
+        }
         "read_tool_data" => Ok(read_tool_data(&ctx.root)?),
+        "new_analyst" => {
+            let task_id = args["task_id"]
+                .as_str()
+                .context("new_analyst requires task_id")?
+                .to_string();
+            spawn_agent(&ctx, caller_agent, "analyst", Some(task_id))
+        }
+        "new_strategist" => spawn_agent(&ctx, caller_agent, "strategist", None),
+        "new_reporter" => spawn_agent(&ctx, caller_agent, "reporter", None),
         "spawn_agent" => {
-            if caller_agent != "main_agent" {
-                bail!("spawn_agent only allowed for main_agent");
-            }
             let role = args["name"].as_str().context("spawn_agent requires name")?;
-            let agent = map_spawn_role_to_agent(role)?;
             let task_id = args
                 .get("task_id")
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
-
-            if agent == "analyst_agent"
-                && ctx.active_analysts.load(Ordering::SeqCst) >= ctx.cfg.max_agents_per_time
-            {
-                log_event("analyst capacity reached".to_string());
-                return Ok("analyst capacity reached".to_string());
-            }
-
-            if agent == "analyst_agent" {
-                if task_id.is_none() {
-                    bail!("spawn_agent with name=analyst requires task_id");
-                }
-                ctx.active_analysts.fetch_add(1, Ordering::SeqCst);
-            }
-
-            let ctx_clone = ctx.clone();
-            let agent_name = agent.to_string();
-            if let Some(id) = task_id.as_deref() {
-                log_event(format!("Spawn {agent} for task {id}"));
-            } else {
-                log_event(format!("Spawn {agent}"));
-            }
-            let handle = tokio::spawn(async move {
-                let result = run_llm_agent(ctx_clone.clone(), &agent_name, task_id).await;
-                if agent_name == "analyst_agent" {
-                    ctx_clone.active_analysts.fetch_sub(1, Ordering::SeqCst);
-                }
-                result
-            });
-            ctx.handles
-                .lock()
-                .expect("handles mutex poisoned")
-                .push(handle);
-            Ok(format!("spawned {role}"))
+            spawn_agent(&ctx, caller_agent, role, task_id)
         }
         "claim_task" => {
             let id = args["id"].as_str().context("claim_task requires id")?;
@@ -376,6 +368,53 @@ fn execute_tool_call(
     }
 }
 
+fn spawn_agent(
+    ctx: &RuntimeCtx,
+    caller_agent: &str,
+    role: &str,
+    task_id: Option<String>,
+) -> Result<String> {
+    if caller_agent != "main_agent" {
+        bail!("spawn_agent only allowed for main_agent");
+    }
+
+    let agent = map_spawn_role_to_agent(role)?;
+
+    if agent == "analyst_agent"
+        && ctx.active_analysts.load(Ordering::SeqCst) >= ctx.cfg.max_agents_per_time
+    {
+        log_event("analyst capacity reached".to_string());
+        return Ok("analyst capacity reached".to_string());
+    }
+
+    if agent == "analyst_agent" {
+        if task_id.is_none() {
+            bail!("spawn_agent with name=analyst requires task_id");
+        }
+        ctx.active_analysts.fetch_add(1, Ordering::SeqCst);
+    }
+
+    let ctx_clone = ctx.clone();
+    let agent_name = agent.to_string();
+    if let Some(id) = task_id.as_deref() {
+        log_event(format!("Spawn {agent} for task {id}"));
+    } else {
+        log_event(format!("Spawn {agent}"));
+    }
+    let handle = tokio::spawn(async move {
+        let result = run_llm_agent(ctx_clone.clone(), &agent_name, task_id).await;
+        if agent_name == "analyst_agent" {
+            ctx_clone.active_analysts.fetch_sub(1, Ordering::SeqCst);
+        }
+        result
+    });
+    ctx.handles
+        .lock()
+        .expect("handles mutex poisoned")
+        .push(handle);
+    Ok(format!("spawned {role}"))
+}
+
 fn build_system_prompt(
     cfg: &Susfile,
     root: &Path,
@@ -383,11 +422,6 @@ fn build_system_prompt(
     task_hint: Option<&str>,
 ) -> Result<String> {
     let base = render_agent_prompt(cfg, root, agent_name)?;
-    let base = if agent_name == "analyst_agent" {
-        base.replace("{{TASK}}", task_hint.unwrap_or_default())
-    } else {
-        base.replace("{{TASK}}", "")
-    };
 
     let mut tools_list = String::new();
     for tool in &cfg.tools.cli {
@@ -410,12 +444,14 @@ fn build_system_prompt(
     }
 
     if agent_name == "analyst_agent" {
-        return Ok(format!(
-            "{base}\n\nAvailable analyst CLI tools from susfile:\n{tools_list}\nAll tool call outputs are automatically written to tool_data/Dxxxx.md for your task. You do not need to copy raw tool output into notes."
-        ));
+        return Ok(base
+            .replace("{{TASK}}", task_hint.unwrap_or_default())
+            .replace("{{ENVIRONMENT_TOOLS}}", &tools_list));
     }
 
-    Ok(base.to_string())
+    Ok(base
+        .replace("{{TASK}}", "")
+        .replace("{{ENVIRONMENT_TOOLS}}", ""))
 }
 
 fn execute_configured_cli_tool(cfg: &Susfile, name: &str, args: &Value) -> Result<String> {
@@ -575,6 +611,15 @@ fn read_tool_data(root: &Path) -> Result<String> {
     }
 
     Ok(combined)
+}
+
+fn read_attack_model(root: &Path) -> Result<String> {
+    Ok(fs::read_to_string(root.join("attack_model.md")).unwrap_or_default())
+}
+
+fn write_attack_model(root: &Path, markdown: &str) -> Result<()> {
+    fs::write(root.join("attack_model.md"), markdown).context("failed to write attack_model.md")?;
+    Ok(())
 }
 
 fn write_if_missing(path: &Path, content: &str) -> Result<()> {

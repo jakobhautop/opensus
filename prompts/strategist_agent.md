@@ -17,6 +17,8 @@ You escalate phases only when justified.
 - read_attack_model()
 - read_note(task_id)
 - read_tool_data()
+- cve_search(query)
+- cve_show(id)
 - update_attack_model(updated_model)
 - update_plan(updated_markdown)
 
