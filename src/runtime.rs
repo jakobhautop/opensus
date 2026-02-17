@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 
 const MAIN_AGENT_PROMPT: &str = include_str!("../prompts/main_agent.md");
-const PLANNING_AGENT_PROMPT: &str = include_str!("../prompts/planning_agent.md");
-const WORKER_AGENT_PROMPT: &str = include_str!("../prompts/worker_agent.md");
+const STRATEGIST_AGENT_PROMPT: &str = include_str!("../prompts/strategist_agent.md");
+const ANALYST_AGENT_PROMPT: &str = include_str!("../prompts/analyst_agent.md");
 const REPORT_AGENT_PROMPT: &str = include_str!("../prompts/report_agent.md");
 const HEARTBEAT_PROMPT: &str = include_str!("../prompts/heartbeat.md");
 
@@ -24,18 +24,18 @@ fn log_event(message: impl AsRef<str>) {
 
 fn map_spawn_role_to_agent(role: &str) -> Result<&'static str> {
     match role {
-        "worker" => Ok("worker_agent"),
-        "planner" => Ok("planning_agent"),
+        "analyst" => Ok("analyst_agent"),
+        "strategist" => Ok("strategist_agent"),
         "reporter" => Ok("report_agent"),
-        _ => bail!("spawn_agent.name must be one of: worker, planner, reporter"),
+        _ => bail!("spawn_agent.name must be one of: analyst, strategist, reporter"),
     }
 }
 
 fn embedded_prompt(agent_name: &str) -> Result<&'static str> {
     match agent_name {
         "main_agent" => Ok(MAIN_AGENT_PROMPT),
-        "planning_agent" => Ok(PLANNING_AGENT_PROMPT),
-        "worker_agent" => Ok(WORKER_AGENT_PROMPT),
+        "strategist_agent" => Ok(STRATEGIST_AGENT_PROMPT),
+        "analyst_agent" => Ok(ANALYST_AGENT_PROMPT),
         "report_agent" => Ok(REPORT_AGENT_PROMPT),
         _ => bail!("unknown agent: {agent_name}"),
     }
@@ -44,8 +44,8 @@ fn embedded_prompt(agent_name: &str) -> Result<&'static str> {
 fn role_custom_prompt_path(cfg: &Susfile, agent_name: &str) -> Option<String> {
     let agents = cfg.agents.as_ref()?;
     match agent_name {
-        "worker_agent" => agents.worker.as_ref().map(|c| c.prompt.clone()),
-        "planning_agent" => agents.planner.as_ref().map(|c| c.prompt.clone()),
+        "analyst_agent" => agents.analyst.as_ref().map(|c| c.prompt.clone()),
+        "strategist_agent" => agents.strategist.as_ref().map(|c| c.prompt.clone()),
         "report_agent" => agents.reporter.as_ref().map(|c| c.prompt.clone()),
         _ => None,
     }
@@ -65,7 +65,9 @@ fn render_agent_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<S
         String::new()
     };
 
-    Ok(base.replace("{{USER_INPUT}}", &custom_prompt))
+    Ok(base
+        .replace("{{USER_INPUT}}", &custom_prompt)
+        .replace("{{HEARTBEAT_MESSAGE}}", HEARTBEAT_PROMPT))
 }
 
 use crate::{
@@ -82,7 +84,7 @@ struct RuntimeCtx {
     cfg: Susfile,
     api_key: Arc<String>,
     client: Client,
-    active_workers: Arc<AtomicUsize>,
+    active_analysts: Arc<AtomicUsize>,
     handles: Arc<std::sync::Mutex<Vec<JoinHandle<Result<()>>>>>,
 }
 
@@ -108,6 +110,8 @@ pub fn handle_init(root: &Path) -> Result<()> {
 
     fs::create_dir_all(root.join("notes")).context("failed to create notes/")?;
     log_event("Ensured notes/ exists");
+    fs::create_dir_all(root.join("tool_data")).context("failed to create tool_data/")?;
+    log_event("Ensured tool_data/ exists");
     write_if_missing(&root.join("plan.md"), "")?;
     log_event("Ensured plan.md exists");
     write_if_missing(
@@ -115,6 +119,8 @@ pub fn handle_init(root: &Path) -> Result<()> {
         "# Brief\n\nDescribe assignment scope and goals for agents.\n",
     )?;
     log_event("Ensured brief.md exists");
+    write_if_missing(&root.join("attack_model.md"), "")?;
+    log_event("Ensured attack_model.md exists");
 
     Ok(())
 }
@@ -130,6 +136,14 @@ pub fn handle_reset(root: &Path) -> Result<()> {
 
     fs::create_dir_all(&notes_path).context("failed to recreate notes/")?;
     log_event("Reset notes/ directory");
+
+    let tool_data_path = root.join("tool_data");
+    if tool_data_path.exists() {
+        fs::remove_dir_all(&tool_data_path).context("failed to remove tool_data/")?;
+    }
+
+    fs::create_dir_all(&tool_data_path).context("failed to recreate tool_data/")?;
+    log_event("Reset tool_data/ directory");
     fs::write(root.join("plan.md"), "").context("failed to reset plan.md")?;
     log_event("Plan updated (plan.md reset)");
 
@@ -147,7 +161,7 @@ pub async fn handle_go(root: &Path) -> Result<()> {
         cfg,
         api_key: Arc::new(api_key),
         client: Client::new(),
-        active_workers: Arc::new(AtomicUsize::new(0)),
+        active_analysts: Arc::new(AtomicUsize::new(0)),
         handles: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
 
@@ -185,7 +199,14 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
         log_event(format!("{agent_name} started"));
     }
 
-    let system_prompt = build_system_prompt(&ctx.cfg, &ctx.root, agent_name)?;
+    let system_prompt =
+        build_system_prompt(&ctx.cfg, &ctx.root, agent_name, task_label.as_deref())?;
+    if matches!(
+        agent_name,
+        "main_agent" | "analyst_agent" | "strategist_agent"
+    ) {
+        log_event(format!("System prompt for {agent_name}:\n{system_prompt}"));
+    }
     let tools = tools_for_agent(agent_name, &ctx.cfg);
 
     let brief = fs::read_to_string(ctx.root.join("brief.md")).unwrap_or_default();
@@ -220,7 +241,7 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
             let args: Value = serde_json::from_str(args_raw).unwrap_or_else(|_| json!({}));
 
             log_event(format!("{agent_name} called tool {name}"));
-            let tool_result = execute_tool_call(ctx.clone(), agent_name, name, args);
+            let tool_result = execute_tool_call(ctx.clone(), agent_name, name, args.clone());
             let content = match tool_result {
                 Ok(v) => {
                     log_event(format!("{agent_name} called tool {name} .. COMPLETE"));
@@ -231,6 +252,14 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
                     format!("tool error: {err}")
                 }
             };
+
+            if agent_name == "analyst_agent" {
+                if let Some(task_id) = task_label.as_deref() {
+                    if let Err(err) = append_tool_data(&ctx.root, task_id, name, &args, &content) {
+                        log_event(format!("failed to write tool_data for {task_id}: {err}"));
+                    }
+                }
+            }
 
             messages.push(json!({
                 "role": "tool",
@@ -257,59 +286,48 @@ fn execute_tool_call(
 ) -> Result<String> {
     match name {
         "read_plan" => Ok(read_plan(&ctx.root)?),
-        "write_plan" => {
-            let markdown = args["markdown"]
+        "update_plan" | "write_plan" => {
+            let markdown = args["updated_markdown"]
                 .as_str()
-                .context("write_plan requires markdown")?;
+                .or_else(|| args["markdown"].as_str())
+                .context("update_plan requires updated_markdown")?;
             write_plan(&ctx.root, markdown)?;
             log_event("Plan updated".to_string());
             Ok("ok".to_string())
         }
-        "read_worker_count" => Ok(ctx.active_workers.load(Ordering::SeqCst).to_string()),
+        "read_note" => {
+            let id = args["id"].as_str().context("read_note requires id")?;
+            Ok(
+                fs::read_to_string(ctx.root.join("notes").join(format!("{id}.md")))
+                    .with_context(|| format!("failed to read notes/{id}.md"))?,
+            )
+        }
+        "read_attack_model" => Ok(read_attack_model(&ctx.root)?),
+        "update_attack_model" => {
+            let markdown = args["updated_model"]
+                .as_str()
+                .context("update_attack_model requires updated_model")?;
+            write_attack_model(&ctx.root, markdown)?;
+            log_event("Attack model updated".to_string());
+            Ok("ok".to_string())
+        }
+        "read_tool_data" => Ok(read_tool_data(&ctx.root)?),
+        "new_analyst" => {
+            let task_id = args["task_id"]
+                .as_str()
+                .context("new_analyst requires task_id")?
+                .to_string();
+            spawn_agent(&ctx, caller_agent, "analyst", Some(task_id))
+        }
+        "new_strategist" => spawn_agent(&ctx, caller_agent, "strategist", None),
+        "new_reporter" => spawn_agent(&ctx, caller_agent, "reporter", None),
         "spawn_agent" => {
-            if caller_agent != "main_agent" {
-                bail!("spawn_agent only allowed for main_agent");
-            }
             let role = args["name"].as_str().context("spawn_agent requires name")?;
-            let agent = map_spawn_role_to_agent(role)?;
             let task_id = args
                 .get("task_id")
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
-
-            if agent == "worker_agent"
-                && ctx.active_workers.load(Ordering::SeqCst) >= ctx.cfg.max_agents_per_time
-            {
-                log_event("worker capacity reached".to_string());
-                return Ok("worker capacity reached".to_string());
-            }
-
-            if agent == "worker_agent" {
-                if task_id.is_none() {
-                    bail!("spawn_agent with name=worker requires task_id");
-                }
-                ctx.active_workers.fetch_add(1, Ordering::SeqCst);
-            }
-
-            let ctx_clone = ctx.clone();
-            let agent_name = agent.to_string();
-            if let Some(id) = task_id.as_deref() {
-                log_event(format!("Spawn {agent} for task {id}"));
-            } else {
-                log_event(format!("Spawn {agent}"));
-            }
-            let handle = tokio::spawn(async move {
-                let result = run_llm_agent(ctx_clone.clone(), &agent_name, task_id).await;
-                if agent_name == "worker_agent" {
-                    ctx_clone.active_workers.fetch_sub(1, Ordering::SeqCst);
-                }
-                result
-            });
-            ctx.handles
-                .lock()
-                .expect("handles mutex poisoned")
-                .push(handle);
-            Ok(format!("spawned {role}"))
+            spawn_agent(&ctx, caller_agent, role, task_id)
         }
         "claim_task" => {
             let id = args["id"].as_str().context("claim_task requires id")?;
@@ -350,11 +368,60 @@ fn execute_tool_call(
     }
 }
 
-fn build_system_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<String> {
-    let base = render_agent_prompt(cfg, root, agent_name)?;
-    if agent_name != "planning_agent" {
-        return Ok(base.to_string());
+fn spawn_agent(
+    ctx: &RuntimeCtx,
+    caller_agent: &str,
+    role: &str,
+    task_id: Option<String>,
+) -> Result<String> {
+    if caller_agent != "main_agent" {
+        bail!("spawn_agent only allowed for main_agent");
     }
+
+    let agent = map_spawn_role_to_agent(role)?;
+
+    if agent == "analyst_agent"
+        && ctx.active_analysts.load(Ordering::SeqCst) >= ctx.cfg.max_agents_per_time
+    {
+        log_event("analyst capacity reached".to_string());
+        return Ok("analyst capacity reached".to_string());
+    }
+
+    if agent == "analyst_agent" {
+        if task_id.is_none() {
+            bail!("spawn_agent with name=analyst requires task_id");
+        }
+        ctx.active_analysts.fetch_add(1, Ordering::SeqCst);
+    }
+
+    let ctx_clone = ctx.clone();
+    let agent_name = agent.to_string();
+    if let Some(id) = task_id.as_deref() {
+        log_event(format!("Spawn {agent} for task {id}"));
+    } else {
+        log_event(format!("Spawn {agent}"));
+    }
+    let handle = tokio::spawn(async move {
+        let result = run_llm_agent(ctx_clone.clone(), &agent_name, task_id).await;
+        if agent_name == "analyst_agent" {
+            ctx_clone.active_analysts.fetch_sub(1, Ordering::SeqCst);
+        }
+        result
+    });
+    ctx.handles
+        .lock()
+        .expect("handles mutex poisoned")
+        .push(handle);
+    Ok(format!("spawned {role}"))
+}
+
+fn build_system_prompt(
+    cfg: &Susfile,
+    root: &Path,
+    agent_name: &str,
+    task_hint: Option<&str>,
+) -> Result<String> {
+    let base = render_agent_prompt(cfg, root, agent_name)?;
 
     let mut tools_list = String::new();
     for tool in &cfg.tools.cli {
@@ -370,9 +437,21 @@ fn build_system_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<S
         ));
     }
 
-    Ok(format!(
-        "{base}\n\nAvailable worker CLI tools from susfile:\n{tools_list}"
-    ))
+    if agent_name == "strategist_agent" {
+        return Ok(format!(
+            "{base}\n\nAvailable analyst CLI tools from susfile:\n{tools_list}\nUse read_tool_data() to correlate analyst tool outputs in tool_data/ with notes/ when updating attack_model.md and plan.md."
+        ));
+    }
+
+    if agent_name == "analyst_agent" {
+        return Ok(base
+            .replace("{{TASK}}", task_hint.unwrap_or_default())
+            .replace("{{ENVIRONMENT_TOOLS}}", &tools_list));
+    }
+
+    Ok(base
+        .replace("{{TASK}}", "")
+        .replace("{{ENVIRONMENT_TOOLS}}", ""))
 }
 
 fn execute_configured_cli_tool(cfg: &Susfile, name: &str, args: &Value) -> Result<String> {
@@ -455,6 +534,94 @@ fn add_note(root: &Path, task_id: &str, note: &str) -> Result<()> {
     Ok(())
 }
 
+fn task_data_path(root: &Path, task_id: &str) -> PathBuf {
+    let data_id = if let Some(rest) = task_id.strip_prefix('T') {
+        format!("D{rest}")
+    } else {
+        format!("D{task_id}")
+    };
+    root.join("tool_data").join(format!("{data_id}.md"))
+}
+
+fn append_tool_data(
+    root: &Path,
+    task_id: &str,
+    tool_name: &str,
+    args: &Value,
+    output: &str,
+) -> Result<()> {
+    fs::create_dir_all(root.join("tool_data")).context("failed to create tool_data/")?;
+    let path = task_data_path(root, task_id);
+    let mut content = if path.exists() {
+        fs::read_to_string(&path).context("failed to read tool data")?
+    } else {
+        format!(
+            "# Tool data for {task_id}
+"
+        )
+    };
+
+    content.push_str(&format!(
+        "
+## Tool: {tool_name}
+args: {}
+
+```
+{}
+```
+",
+        serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string()),
+        output
+    ));
+
+    fs::write(path, content).context("failed to write tool data")?;
+    Ok(())
+}
+
+fn read_tool_data(root: &Path) -> Result<String> {
+    let dir = root.join("tool_data");
+    if !dir.exists() {
+        return Ok(String::new());
+    }
+
+    let mut entries = fs::read_dir(&dir)
+        .context("failed to read tool_data/")?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to list tool_data/")?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    let mut combined = String::new();
+    for entry in entries {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let body = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        combined.push_str(&format!(
+            "
+# {file_name}
+{body}
+"
+        ));
+    }
+
+    Ok(combined)
+}
+
+fn read_attack_model(root: &Path) -> Result<String> {
+    Ok(fs::read_to_string(root.join("attack_model.md")).unwrap_or_default())
+}
+
+fn write_attack_model(root: &Path, markdown: &str) -> Result<()> {
+    fs::write(root.join("attack_model.md"), markdown).context("failed to write attack_model.md")?;
+    Ok(())
+}
+
 fn write_if_missing(path: &Path, content: &str) -> Result<()> {
     if !path.exists() {
         fs::write(path, content).with_context(|| format!("failed writing {}", path.display()))?;
@@ -497,6 +664,9 @@ mod tests {
         )
         .expect("plan");
         fs::write(tmp.path().join("notes").join("T001.md"), "note").expect("note");
+        fs::create_dir_all(tmp.path().join("tool_data")).expect("tool_data");
+        fs::write(tmp.path().join("tool_data").join("D001.md"), "tool output")
+            .expect("tool output");
 
         handle_reset(tmp.path()).expect("reset");
 
@@ -514,27 +684,32 @@ mod tests {
             .expect("read notes dir")
             .next()
             .is_none());
+        assert!(tmp.path().join("tool_data").exists());
+        assert!(fs::read_dir(tmp.path().join("tool_data"))
+            .expect("read tool_data dir")
+            .next()
+            .is_none());
     }
 
     #[test]
     fn build_system_prompt_injects_custom_user_prompt() {
         let tmp = tempfile::tempdir().expect("tmp");
         fs::write(
-            tmp.path().join("worker-extra.md"),
+            tmp.path().join("report-extra.md"),
             "Focus only on web targets.",
         )
         .expect("prompt");
 
         let mut cfg = default_susfile();
         cfg.agents = Some(crate::config::AgentsConfig {
-            worker: Some(crate::config::AgentPromptConfig {
-                prompt: "worker-extra.md".to_string(),
+            analyst: None,
+            strategist: None,
+            reporter: Some(crate::config::AgentPromptConfig {
+                prompt: "report-extra.md".to_string(),
             }),
-            reporter: None,
-            planner: None,
         });
 
-        let rendered = build_system_prompt(&cfg, tmp.path(), "worker_agent")
+        let rendered = build_system_prompt(&cfg, tmp.path(), "report_agent", None)
             .expect("system prompt should render");
 
         assert!(rendered.contains("<User input>"));
