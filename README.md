@@ -1,6 +1,6 @@
 # OpenSus - LLMs for Pentesting
 
-OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM workers all commited to one assignment. OpenSus is meant to run in an environment with nmap, metasploit and other pentest tools (Kali Linux for example). User runs "opensus init" to scaffold a project. They then write an assignment "brief.md" that provides opensus agents the context they need and adjust the susfile with config. User then runs "opensus go" to start the main_agent which will coordinate planning, working and reporting agents until assignment is completed.
+OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM analysts all commited to one assignment. OpenSus is meant to run in an environment with nmap, metasploit and other pentest tools (Kali Linux for example). User runs "opensus init" to scaffold a project. They then write an assignment "brief.md" that provides opensus agents the context they need and adjust the susfile with config. User then runs "opensus go" to start the main_agent which will coordinate strategist, analyst and reporting agents until assignment is completed.
 
 ## Public commands
 
@@ -16,8 +16,8 @@ OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM work
 Prompts are compiled into the binary from:
 
 - `prompts/main_agent.md`
-- `prompts/planning_agent.md`
-- `prompts/worker_agent.md`
+- `prompts/strategist_agent.md`
+- `prompts/analyst_agent.md`
 - `prompts/report_agent.md`
 
 Users do not edit runtime prompt files after build; `init` does not scaffold prompts.
@@ -33,9 +33,9 @@ Users do not edit runtime prompt files after build; `init` does not scaffold pro
 
 ## Susfile CLI tools
 
-`susfile` now defines worker CLI tooling under `tools.cli`. Each tool includes:
+`susfile` now defines analyst CLI tooling under `tools.cli`. Each tool includes:
 
-- `name` (function name exposed to worker tool calls)
+- `name` (function name exposed to analyst tool calls)
 - `description` (short natural-language behavior)
 - `command` (CLI template, for example `nmap -A <target>`)
 - `args` (argument definitions used to map model-provided parameters into command placeholders)
@@ -71,18 +71,18 @@ Example:
 
 Supported keys:
 
-- `agents.worker.prompt`
+- `agents.analyst.prompt`
 - `agents.reporter.prompt`
-- `agents.planner.prompt`
+- `agents.strategist.prompt`
 
 Example:
 
 ```json
 {
   "agents": {
-    "worker": {"prompt": "prompts/worker.custom.md"},
-    "reporter": {"prompt": "prompts/reporter.custom.md"},
-    "planner": {"prompt": "prompts/planner.custom.md"}
+    "analyst": {"prompt": "prompts/analyst.md"},
+    "reporter": {"prompt": "prompts/reporter.md"},
+    "strategist": {"prompt": "prompts/strategist.md"}
   }
 }
 ```
@@ -93,7 +93,7 @@ Example:
 
 ## reset runtime artifacts
 
-`opensus reset` keeps `brief.md` and `susfile`, but clears runtime progress by emptying `plan.md` and recreating an empty `notes/` directory.
+`opensus reset` keeps `brief.md` and `susfile`, but clears runtime progress by emptying `plan.md` and recreating empty `notes/` and `tool_data/` directories.
 
 
 ## CVE database

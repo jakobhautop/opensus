@@ -16,11 +16,11 @@ pub struct Susfile {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worker: Option<AgentPromptConfig>,
+    pub analyst: Option<AgentPromptConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reporter: Option<AgentPromptConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub planner: Option<AgentPromptConfig>,
+    pub strategist: Option<AgentPromptConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -73,7 +73,8 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
         "read_plan",
         "write_plan",
         "spawn_agent",
-        "read_worker_count",
+        "read_analyst_count",
+        "read_tool_data",
         "claim_task",
         "complete_task",
         "add_note",
@@ -81,9 +82,9 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
 
     if let Some(agents) = cfg.agents.as_ref() {
         for (role, prompt_cfg) in [
-            ("worker", agents.worker.as_ref()),
+            ("analyst", agents.analyst.as_ref()),
             ("reporter", agents.reporter.as_ref()),
-            ("planner", agents.planner.as_ref()),
+            ("strategist", agents.strategist.as_ref()),
         ] {
             if let Some(prompt_cfg) = prompt_cfg {
                 if prompt_cfg.prompt.trim().is_empty() {
@@ -211,16 +212,16 @@ mod tests {
     fn validation_fails_for_empty_agent_prompt_path() {
         let mut cfg = default_susfile();
         cfg.agents = Some(AgentsConfig {
-            worker: Some(AgentPromptConfig {
+            analyst: Some(AgentPromptConfig {
                 prompt: "   ".to_string(),
             }),
             reporter: None,
-            planner: None,
+            strategist: None,
         });
 
         let err = validate_susfile(&cfg).expect_err("expected validation error");
         assert!(err
             .to_string()
-            .contains("susfile.agents.worker.prompt must not be empty"));
+            .contains("susfile.agents.analyst.prompt must not be empty"));
     }
 }
