@@ -12,7 +12,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 
-const MAIN_AGENT_PROMPT: &str = include_str!("../prompts/main_agent.md");
+const DISPATCH_AGENT_PROMPT: &str = include_str!("../prompts/dispatch_agent.md");
 const STRATEGIST_AGENT_PROMPT: &str = include_str!("../prompts/strategist_agent.md");
 const ANALYST_AGENT_PROMPT: &str = include_str!("../prompts/analyst_agent.md");
 const REPORT_AGENT_PROMPT: &str = include_str!("../prompts/report_agent.md");
@@ -33,7 +33,7 @@ fn map_spawn_role_to_agent(role: &str) -> Result<&'static str> {
 
 fn embedded_prompt(agent_name: &str) -> Result<&'static str> {
     match agent_name {
-        "main_agent" => Ok(MAIN_AGENT_PROMPT),
+        "dispatch_agent" => Ok(DISPATCH_AGENT_PROMPT),
         "strategist_agent" => Ok(STRATEGIST_AGENT_PROMPT),
         "analyst_agent" => Ok(ANALYST_AGENT_PROMPT),
         "report_agent" => Ok(REPORT_AGENT_PROMPT),
@@ -165,8 +165,8 @@ pub async fn handle_go(root: &Path) -> Result<()> {
         handles: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
 
-    log_event("Spawn main_agent");
-    run_llm_agent(ctx.clone(), "main_agent", None).await?;
+    log_event("Spawn dispatch_agent");
+    run_llm_agent(ctx.clone(), "dispatch_agent", None).await?;
 
     // wait for spawned agents from this heartbeat
     let drained = {
@@ -203,7 +203,7 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
         build_system_prompt(&ctx.cfg, &ctx.root, agent_name, task_label.as_deref())?;
     if matches!(
         agent_name,
-        "main_agent" | "analyst_agent" | "strategist_agent"
+        "dispatch_agent" | "analyst_agent" | "strategist_agent"
     ) {
         log_event(format!("System prompt for {agent_name}:\n{system_prompt}"));
     }
@@ -311,6 +311,14 @@ fn execute_tool_call(
             log_event("Attack model updated".to_string());
             Ok("ok".to_string())
         }
+        "write_report" => {
+            let markdown = args["markdown"]
+                .as_str()
+                .context("write_report requires markdown")?;
+            write_report(&ctx.root, markdown)?;
+            log_event("Report updated".to_string());
+            Ok("ok".to_string())
+        }
         "read_tool_data" => Ok(read_tool_data(&ctx.root)?),
         "new_analyst" => {
             let task_id = args["task_id"]
@@ -374,8 +382,8 @@ fn spawn_agent(
     role: &str,
     task_id: Option<String>,
 ) -> Result<String> {
-    if caller_agent != "main_agent" {
-        bail!("spawn_agent only allowed for main_agent");
+    if caller_agent != "dispatch_agent" {
+        bail!("spawn_agent only allowed for dispatch_agent");
     }
 
     let agent = map_spawn_role_to_agent(role)?;
@@ -622,6 +630,11 @@ fn write_attack_model(root: &Path, markdown: &str) -> Result<()> {
     Ok(())
 }
 
+fn write_report(root: &Path, markdown: &str) -> Result<()> {
+    fs::write(root.join("report.md"), markdown).context("failed to write report.md")?;
+    Ok(())
+}
+
 fn write_if_missing(path: &Path, content: &str) -> Result<()> {
     if !path.exists() {
         fs::write(path, content).with_context(|| format!("failed writing {}", path.display()))?;
@@ -639,7 +652,7 @@ mod tests {
         fs::create_dir_all(tmp.path().join("notes")).expect("notes");
         write_plan(
             tmp.path(),
-            "# Plan\n\nplanning_status: complete\n\n- [ ] T001 - Aggressive scan 10.0.0.1\n",
+            "# Plan\n\nstatus: complete\n\n- [ ] T001 - Aggressive scan 10.0.0.1\n",
         )
         .expect("plan");
         ensure_task_note(tmp.path(), "T001", "Aggressive scan 10.0.0.1", "open").expect("note");

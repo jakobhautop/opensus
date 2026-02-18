@@ -81,6 +81,7 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
         "read_attack_model",
         "update_attack_model",
         "read_tool_data",
+        "write_report",
         "claim_task",
         "complete_task",
         "add_note",
