@@ -65,9 +65,12 @@ fn render_agent_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<S
         String::new()
     };
 
+    let susfile_json = serde_json::to_string_pretty(cfg).context("failed to render susfile")?;
+
     Ok(base
         .replace("{{USER_INPUT}}", &custom_prompt)
-        .replace("{{HEARTBEAT_MESSAGE}}", HEARTBEAT_PROMPT))
+        .replace("{{HEARTBEAT_MESSAGE}}", HEARTBEAT_PROMPT)
+        .replace("{{SUSFILE}}", &susfile_json))
 }
 
 use crate::{
@@ -443,12 +446,6 @@ fn build_system_prompt(
         tools_list.push_str(&format!(
             "- {}: {} (command: {}; args: {})\n",
             tool.name, tool.description, tool.command, arg_list
-        ));
-    }
-
-    if agent_name == "strategist_agent" {
-        return Ok(format!(
-            "{base}\n\nAvailable analyst CLI tools from susfile:\n{tools_list}\nUse read_tool_data() to correlate analyst tool outputs in tool_data/ with notes/ when updating attack_model.md and plan.md."
         ));
     }
 
