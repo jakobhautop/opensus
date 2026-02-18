@@ -1,6 +1,6 @@
 # OpenSus - LLMs for Pentesting
 
-OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM analysts all commited to one assignment. OpenSus is meant to run in an environment with nmap, metasploit and other pentest tools (Kali Linux for example). User runs "opensus init" to scaffold a project. They then write an assignment "brief.md" that provides opensus agents the context they need and adjust the susfile with config. User then runs "opensus go" to start the main_agent which will coordinate strategist, analyst and reporting agents until assignment is completed.
+OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM analysts all commited to one assignment. OpenSus is meant to run in an environment with nmap, metasploit and other pentest tools (Kali Linux for example). User runs "opensus init" to scaffold a project. They then write an assignment "brief.md" that provides opensus agents the context they need and adjust the susfile with config. User then runs "opensus go" to start the dispatch_agent which will coordinate strategist, analyst and reporting agents until assignment is completed.
 
 ## Public commands
 
@@ -15,7 +15,7 @@ OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM anal
 
 Prompts are compiled into the binary from:
 
-- `prompts/main_agent.md`
+- `prompts/dispatch_agent.md`
 - `prompts/strategist_agent.md`
 - `prompts/analyst_agent.md`
 - `prompts/report_agent.md`
@@ -89,7 +89,7 @@ Example:
 
 ## LLM runtime model
 
-`opensus go` invokes `main_agent` via OpenAI Chat Completions and provides tool definitions in the request. Agents decide tool usage themselves. OpenSus executes returned tool calls and feeds results back to the LLM until the agent completes.
+`opensus go` invokes `dispatch_agent` via OpenAI Chat Completions and provides tool definitions in the request. Agents decide tool usage themselves. OpenSus executes returned tool calls and feeds results back to the LLM until the agent completes.
 
 ## reset runtime artifacts
 

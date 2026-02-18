@@ -1,3 +1,1 @@
-Use brief.md + plan.md to progress the mission.
-
-Brief:
+Heart beat invoked. Please complete the tasks described in this document.

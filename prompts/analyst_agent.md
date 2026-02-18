@@ -20,9 +20,9 @@ You never modify attack_model.md.
 
 ## Available Tools
 
-- claim_task(task_id)
-- complete_task(task_id)
-- add_note(task_id, structured_note)
+- claim_task(id)
+- complete_task(id)
+- add_note(id, note)
 - cve_search(query)
 - cve_show(id)
 

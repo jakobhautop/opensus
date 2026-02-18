@@ -55,7 +55,7 @@ pub fn parse_tasks(markdown: &str) -> Vec<PlanTask> {
 pub fn planning_complete(markdown: &str) -> bool {
     markdown
         .lines()
-        .any(|l| l.trim() == "planning_status: complete")
+        .any(|l| l.trim() == "status: complete")
 }
 
 pub fn update_task_status(root: &Path, task_id: &str, status: TaskStatus) -> Result<()> {
