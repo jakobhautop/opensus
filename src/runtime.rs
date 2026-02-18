@@ -207,7 +207,8 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
     ) {
         log_event(format!("System prompt for {agent_name}:\n{system_prompt}"));
     }
-    let tools = tools_for_agent(agent_name, &ctx.cfg);
+    let cve_tools_enabled = cve::ensure_local_db().is_ok();
+    let tools = tools_for_agent(agent_name, &ctx.cfg, cve_tools_enabled);
 
     let brief = fs::read_to_string(ctx.root.join("brief.md")).unwrap_or_default();
     let user_task = task_hint.unwrap_or_else(|| format!("{}{}", HEARTBEAT_PROMPT, brief));
