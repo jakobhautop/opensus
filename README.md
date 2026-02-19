@@ -5,7 +5,7 @@ OpenSus is a self-orchestrating pentest lab running multiple concurrent LLM anal
 ## Public commands
 
 - `opensus init`
-- `opensus go`
+- `opensus go [--fullauto]`
 - `opensus reset`
 - `opensus cve search <query>`
 - `opensus cve show <CVE-ID>`
@@ -103,7 +103,7 @@ Example:
 
 ## LLM runtime model
 
-`opensus go` invokes `dispatch_agent` via OpenAI Chat Completions and provides tool definitions in the request. Agents decide tool usage themselves. OpenSus executes returned tool calls and feeds results back to the LLM until the agent completes.
+`opensus go` invokes `dispatch_agent` via OpenAI Chat Completions and provides tool definitions in the request. Agents decide tool usage themselves. OpenSus executes returned tool calls and feeds results back to the LLM until the agent completes. Use `opensus go --fullauto` to continuously start a new heartbeat after each completion.
 
 ## reset runtime artifacts
 

@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
     let root = std::env::current_dir().context("failed to resolve current directory")?;
 
     match cli.command {
-        Commands::Go => runtime::handle_go(&root).await,
+        Commands::Go { fullauto } => runtime::handle_go(&root, fullauto).await,
         Commands::Init => runtime::handle_init(&root),
         Commands::Reset => runtime::handle_reset(&root),
         Commands::Cve { command } => match command {
