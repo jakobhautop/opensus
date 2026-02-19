@@ -18,6 +18,8 @@ const STRATEGIST_AGENT_PROMPT: &str = include_str!("../prompts/strategist_agent.
 const ANALYST_AGENT_PROMPT: &str = include_str!("../prompts/analyst_agent.md");
 const REPORT_AGENT_PROMPT: &str = include_str!("../prompts/report_agent.md");
 const HEARTBEAT_PROMPT: &str = include_str!("../prompts/heartbeat.md");
+const HEARTBEAT_EKG: &str =
+    r"____/‾\____/\/\_____/‾‾\____/‾\____/\/\/\_____/‾‾\____________________";
 
 fn log_event(message: impl AsRef<str>) {
     println!("[opensus] {}", message.as_ref());
@@ -156,9 +158,22 @@ pub fn handle_reset(root: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn handle_go(root: &Path) -> Result<()> {
+pub async fn handle_go(root: &Path, fullauto: bool) -> Result<()> {
     log_event("Starting opensus go");
     handle_init(root)?;
+
+    loop {
+        run_heartbeat(root).await?;
+        if !fullauto {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_heartbeat(root: &Path) -> Result<()> {
+    println!("{HEARTBEAT_EKG}");
     let cfg = load_susfile(root)?;
     let api_key = std::env::var("OPENAI_API_KEY").context("missing OPENAI_API_KEY")?;
 
@@ -207,12 +222,6 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
 
     let system_prompt =
         build_system_prompt(&ctx.cfg, &ctx.root, agent_name, task_label.as_deref())?;
-    if matches!(
-        agent_name,
-        "dispatch_agent" | "analyst_agent" | "strategist_agent"
-    ) {
-        log_event(format!("System prompt for {agent_name}:\n{system_prompt}"));
-    }
     let cve_tools_enabled = cve::ensure_local_db().is_ok();
     let tools = tools_for_agent(agent_name, &ctx.cfg, cve_tools_enabled);
 

@@ -11,7 +11,11 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Run one orchestration heartbeat cycle.
-    Go,
+    Go {
+        /// Continuously run heartbeats by starting a new one when the previous heartbeat ends.
+        #[arg(long)]
+        fullauto: bool,
+    },
     /// Initialize workspace files and prompts.
     Init,
     /// Reset runtime artifacts while keeping brief and susfile.
