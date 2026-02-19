@@ -41,15 +41,30 @@ pub fn parse_tasks(markdown: &str) -> Vec<PlanTask> {
             continue;
         };
 
-        if let Some((id, title)) = rest.split_once(" - ") {
-            tasks.push(PlanTask {
-                id: id.trim().to_string(),
-                title: title.trim().to_string(),
-                status,
-            });
+        if let Some((id, title)) = parse_task_id_and_title(rest) {
+            tasks.push(PlanTask { id, title, status });
         }
     }
     tasks
+}
+
+fn parse_task_id_and_title(rest: &str) -> Option<(String, String)> {
+    let trimmed = rest.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some((id, title)) = trimmed.split_once(" - ") {
+        return Some((id.trim().to_string(), title.trim().to_string()));
+    }
+
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let id = parts.next()?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let title = parts.next().unwrap_or("").trim();
+    Some((id.to_string(), title.to_string()))
 }
 
 pub fn planning_complete(markdown: &str) -> bool {
@@ -153,5 +168,19 @@ mod tests {
         assert!(updated.contains(
             "# Tool Request\n- ffuf -u http://10.10.10.5/FUZZ -w /tmp/words.txt\n- gobuster dir -u http://10.10.10.5 -w /tmp/words.txt"
         ));
+    }
+    #[test]
+    fn parse_tasks_accepts_titles_without_dash_separator() {
+        let plan = "# Plan
+- [ ] T0001 Perform network scan with version detection
+";
+        let tasks = parse_tasks(plan);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "T0001");
+        assert_eq!(
+            tasks[0].title,
+            "Perform network scan with version detection"
+        );
+        assert_eq!(tasks[0].status, TaskStatus::Open);
     }
 }
