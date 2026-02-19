@@ -39,13 +39,13 @@ Users do not edit runtime prompt files after build; `init` does not scaffold pro
 - `description` (short natural-language behavior)
 - `command` (CLI template, for example `nmap -A <target>`)
 - `args` (argument definitions used to map model-provided parameters into command placeholders)
-- `allowed_ips` (list of IPv4 addresses that tool call arguments are allowed to reference; any detected IP outside this list is blocked at runtime)
+- `allowed_hosts` (list of allowed hosts for tool call arguments, such as IPv4 addresses, hostnames, or `localhost`; requests outside this list are blocked at runtime)
 
 Example:
 
 ```json
 {
-  "allowed_ips": ["89.167.60.165"],
+  "allowed_hosts": [],
   "tools": {
     "cli": [
       {
@@ -58,6 +58,18 @@ Example:
       }
     ]
   }
+}
+```
+
+Example host allow-list setup:
+
+```json
+{
+  "allowed_hosts": [
+    "89.167.60.165",
+    "localhost",
+    "internal.lab.local"
+  ]
 }
 ```
 

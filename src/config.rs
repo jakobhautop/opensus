@@ -8,8 +8,8 @@ pub struct Susfile {
     pub api: String,
     pub model: String,
     pub max_agents_per_time: usize,
-    #[serde(default)]
-    pub allowed_ips: Vec<String>,
+    #[serde(default, alias = "allowed_ips")]
+    pub allowed_hosts: Vec<String>,
     pub tools: ToolsConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentsConfig>,
@@ -67,9 +67,24 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
         bail!("susfile.max_agents_per_time must be > 0");
     }
 
-    for ip in &cfg.allowed_ips {
-        ip.parse::<std::net::Ipv4Addr>()
-            .with_context(|| format!("susfile.allowed_ips contains invalid IPv4 address `{ip}`"))?;
+    for host in &cfg.allowed_hosts {
+        let candidate = host.trim();
+        if candidate.is_empty() {
+            bail!("susfile.allowed_hosts entries must not be empty");
+        }
+
+        let is_ipv4 = candidate.parse::<std::net::Ipv4Addr>().is_ok();
+        let is_localhost = candidate.eq_ignore_ascii_case("localhost");
+        let is_hostname = candidate
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+            && candidate.chars().any(|c| c.is_ascii_alphabetic());
+
+        if !(is_ipv4 || is_localhost || is_hostname) {
+            bail!(
+                "susfile.allowed_hosts contains invalid host `{candidate}` (expected IPv4, localhost, or hostname)"
+            );
+        }
     }
     if cfg.tools.cli.is_empty() {
         bail!("susfile.tools.cli must include at least one CLI tool definition");
@@ -189,7 +204,7 @@ pub fn default_susfile() -> Susfile {
         api: "openai".to_string(),
         model: "gpt-4.1".to_string(),
         max_agents_per_time: 2,
-        allowed_ips: vec!["127.0.0.1".to_string()],
+        allowed_hosts: vec!["127.0.0.1".to_string()],
         tools: ToolsConfig {
             cli: vec![
                 CliToolConfig {
@@ -212,6 +227,135 @@ pub fn default_susfile() -> Susfile {
                         description: "Target hostname or IP to scan".to_string(),
                     }],
                 },
+                CliToolConfig {
+                    name: "gobuster_dir".to_string(),
+                    description: "Enumerate HTTP directories/files using Kali default wordlists"
+                        .to_string(),
+                    command: "gobuster dir -u <url> -w /usr/share/wordlists/dirb/common.txt"
+                        .to_string(),
+                    args: vec![CliArgConfig {
+                        name: "url".to_string(),
+                        description: "Target base URL (for example http://127.0.0.1)".to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "gobuster_dir_with_wordlist".to_string(),
+                    description: "Enumerate HTTP directories/files with a provided wordlist"
+                        .to_string(),
+                    command: "gobuster dir -u <url> -w <wordlist>".to_string(),
+                    args: vec![
+                        CliArgConfig {
+                            name: "url".to_string(),
+                            description: "Target base URL (for example http://127.0.0.1)"
+                                .to_string(),
+                        },
+                        CliArgConfig {
+                            name: "wordlist".to_string(),
+                            description: "Path to wordlist file for content discovery".to_string(),
+                        },
+                    ],
+                },
+                CliToolConfig {
+                    name: "gobuster_vhost".to_string(),
+                    description: "Enumerate HTTP virtual hosts using Kali default wordlists"
+                        .to_string(),
+                    command: "gobuster vhost -u <url> -w /usr/share/wordlists/dnsmap.txt"
+                        .to_string(),
+                    args: vec![CliArgConfig {
+                        name: "url".to_string(),
+                        description: "Target base URL (for example http://127.0.0.1)".to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "gobuster_vhost_with_wordlist".to_string(),
+                    description: "Enumerate HTTP virtual hosts with a provided wordlist"
+                        .to_string(),
+                    command: "gobuster vhost -u <url> -w <wordlist>".to_string(),
+                    args: vec![
+                        CliArgConfig {
+                            name: "url".to_string(),
+                            description: "Target base URL (for example http://127.0.0.1)"
+                                .to_string(),
+                        },
+                        CliArgConfig {
+                            name: "wordlist".to_string(),
+                            description: "Path to wordlist file for vhost discovery".to_string(),
+                        },
+                    ],
+                },
+                CliToolConfig {
+                    name: "nikto_scan".to_string(),
+                    description: "Run Nikto web vulnerability scan against an HTTP target"
+                        .to_string(),
+                    command: "nikto -h <url>".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "url".to_string(),
+                        description: "Target base URL (for example http://127.0.0.1)".to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "fetch_robots_txt".to_string(),
+                    description: "Fetch robots.txt from a target web service".to_string(),
+                    command: "curl -fsSL <url>/robots.txt".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "url".to_string(),
+                        description: "Target base URL without trailing slash".to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "path_traversal_probe".to_string(),
+                    description: "Probe a potentially vulnerable web path using --path-as-is"
+                        .to_string(),
+                    command: "curl -i --path-as-is <url><path>".to_string(),
+                    args: vec![
+                        CliArgConfig {
+                            name: "url".to_string(),
+                            description: "Target base URL (for example http://127.0.0.1)"
+                                .to_string(),
+                        },
+                        CliArgConfig {
+                            name: "path".to_string(),
+                            description: "Request path to probe (for example /../../etc/passwd)"
+                                .to_string(),
+                        },
+                    ],
+                },
+                CliToolConfig {
+                    name: "curl_raw".to_string(),
+                    description: "Run a raw curl command by supplying argument string".to_string(),
+                    command: "curl <args>".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "args".to_string(),
+                        description: "Arguments passed to curl (for example -i http://127.0.0.1/)"
+                            .to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "vmdk_strings".to_string(),
+                    description: "Extract printable strings from a disk image file".to_string(),
+                    command: "strings -a <image_path>".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "image_path".to_string(),
+                        description: "Path to disk image file (for example challenge.vmdk)"
+                            .to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "vmdk_binwalk".to_string(),
+                    description: "Run binwalk signature scan against a disk image file".to_string(),
+                    command: "binwalk <image_path>".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "image_path".to_string(),
+                        description: "Path to disk image file (for example challenge.vmdk)"
+                            .to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "list_wordlists".to_string(),
+                    description: "List common Kali wordlists and their paths".to_string(),
+                    command: "ls -l /usr/share/wordlists/".to_string(),
+                    args: vec![],
+                },
             ],
         },
         agents: None,
@@ -230,6 +374,54 @@ mod tests {
     }
 
     #[test]
+    fn default_susfile_includes_expected_recon_tools() {
+        let cfg = default_susfile();
+        let names: std::collections::HashSet<_> = cfg
+            .tools
+            .cli
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect();
+
+        assert!(names.contains("gobuster_dir"));
+        assert!(names.contains("gobuster_vhost"));
+        assert!(names.contains("gobuster_dir_with_wordlist"));
+        assert!(names.contains("gobuster_vhost_with_wordlist"));
+        assert!(names.contains("nikto_scan"));
+        assert!(names.contains("fetch_robots_txt"));
+        assert!(names.contains("path_traversal_probe"));
+        assert!(names.contains("curl_raw"));
+        assert!(names.contains("vmdk_strings"));
+        assert!(names.contains("vmdk_binwalk"));
+        assert!(names.contains("list_wordlists"));
+    }
+
+    #[test]
+    fn load_supports_legacy_allowed_ips_key() {
+        let cfg: Susfile = serde_json::from_str(
+            r#"{
+                "api": "openai",
+                "model": "gpt-4.1",
+                "max_agents_per_time": 1,
+                "allowed_ips": ["127.0.0.1"],
+                "tools": {
+                    "cli": [
+                        {
+                            "name": "nmap_targeted_scan",
+                            "description": "Run scan",
+                            "command": "nmap -A <target>",
+                            "args": [{"name": "target", "description": "Target"}]
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .expect("legacy allowed_ips should deserialize");
+
+        assert_eq!(cfg.allowed_hosts, vec!["127.0.0.1"]);
+    }
+
+    #[test]
     fn validation_fails_when_placeholder_has_no_arg_mapping() {
         let mut cfg = default_susfile();
         cfg.tools.cli[0].command = "nmap -A <target> <extra>".to_string();
@@ -238,14 +430,14 @@ mod tests {
     }
 
     #[test]
-    fn validation_fails_for_invalid_allowed_ip() {
+    fn validation_fails_for_invalid_allowed_host() {
         let mut cfg = default_susfile();
-        cfg.allowed_ips = vec!["not-an-ip".to_string()];
+        cfg.allowed_hosts = vec!["bad host value".to_string()];
 
         let err = validate_susfile(&cfg).expect_err("expected validation error");
         assert!(err
             .to_string()
-            .contains("susfile.allowed_ips contains invalid IPv4 address"));
+            .contains("susfile.allowed_hosts contains invalid host"));
     }
 
     #[test]
