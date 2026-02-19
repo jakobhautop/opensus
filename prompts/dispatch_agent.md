@@ -51,7 +51,7 @@ After calling `read_plan()`:
 
 ### 3. Otherwise (status is not complete):
 
-#### 3a. If there are unchecked tasks (`- [ ] Txxxx`)
+#### 3a. If there are explicit unchecked task IDs matching `- [ ] T####`
 → Spawn exactly one analyst for the first unchecked task:
 
     new_analyst(task_id)
@@ -60,6 +60,41 @@ Always pick the first incomplete task in top-down order.
 
 Do not skip tasks.
 Do not spawn multiple analysts.
+Never invent or infer a new task ID (for example, do **not** create `T0003` unless it is explicitly present in plan.md).
+Only dispatch analysts for concrete task lines that include an explicit task ID.
+
+
+---
+
+#### 3a.5. If there are unchecked checklist bullets without explicit task IDs
+(e.g., placeholders like `- [ ] (To be expanded...)`)
+→ Call `new_strategist()`
+
+This means planning must be expanded before more analyst work.
+
+Example pattern that should dispatch **strategist** (not analyst):
+
+```markdown
+# Plan
+
+## Phase 1: Intelligence Gathering
+- [x] T0001 Run aggressive baseline scan on 89.167.60.165 with nmap_targeted_scan tool (nmap -A 89.167.60.165)
+- [x] T0002 Run nmap service/version scan with default scripts on 89.167.60.165 with nmap_service_scan tool (nmap -sV -sC -Pn 89.167.60.165)
+
+## Phase 2: Artifact Analysis
+- [ ] (To be expanded after Phase 1. Focus on mounting and forensic inspection of challenge.vmdk for service config, webroots, credentials leaks, software versions, and privilege escalation vectors.)
+
+## Phase 3: Vulnerability Analysis
+- [ ] (To be expanded upon gathered service and software version evidence. Correlate candidates via CVE search and config review results.)
+
+## Phase 4: Exploitation
+- [ ] (To be expanded once actionable vulnerability chains are mapped. Prioritize viable foothold techniques supported by disk/server parity.)
+
+## Phase 5: Privilege Escalation & Objective
+- [ ] (Expand chain to root only as supporting evidence for privilege escalation emerges.)
+```
+
+In this example there is no unchecked `T####` task to give an analyst, so spawn strategist.
 
 ---
 
@@ -88,6 +123,7 @@ Only spawn one per heartbeat.
 Use when:
 - No plan exists
 - There are no open tasks and status is not complete
+- The plan only has unchecked placeholders without explicit task IDs
 
 ---
 
