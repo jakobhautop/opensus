@@ -53,9 +53,7 @@ pub fn parse_tasks(markdown: &str) -> Vec<PlanTask> {
 }
 
 pub fn planning_complete(markdown: &str) -> bool {
-    markdown
-        .lines()
-        .any(|l| l.trim() == "status: complete")
+    markdown.lines().any(|l| l.trim() == "status: complete")
 }
 
 pub fn update_task_status(root: &Path, task_id: &str, status: TaskStatus) -> Result<()> {
@@ -90,4 +88,70 @@ pub fn update_task_status(root: &Path, task_id: &str, status: TaskStatus) -> Res
     }
 
     write_plan(root, &(out.join("\n") + "\n"))
+}
+
+pub fn append_tool_request(root: &Path, request: &str) -> Result<()> {
+    let markdown = read_plan(root)?;
+    let mut lines: Vec<String> = markdown.lines().map(ToString::to_string).collect();
+
+    if let Some(header_idx) = lines
+        .iter()
+        .position(|line| line.trim().eq_ignore_ascii_case("# Tool Request"))
+    {
+        let mut insert_idx = header_idx + 1;
+        while insert_idx < lines.len() && lines[insert_idx].trim().is_empty() {
+            insert_idx += 1;
+        }
+        lines.insert(insert_idx, format!("- {}", request.trim()));
+    } else {
+        if !lines.is_empty() && !lines.last().is_some_and(|line| line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push("# Tool Request".to_string());
+        lines.push(format!("- {}", request.trim()));
+    }
+
+    write_plan(root, &(lines.join("\n") + "\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn append_tool_request_creates_section_when_missing() {
+        let tmp = tempdir().expect("tempdir");
+        write_plan(
+            tmp.path(),
+            "# Plan\n\n## Phase 1\n- [ ] T0001 - Scan target\n",
+        )
+        .expect("write plan");
+
+        append_tool_request(tmp.path(), "nikto -h http://10.10.10.5").expect("append");
+        let updated = read_plan(tmp.path()).expect("read");
+
+        assert!(updated.contains("# Tool Request\n- nikto -h http://10.10.10.5\n"));
+    }
+
+    #[test]
+    fn append_tool_request_inserts_into_existing_section() {
+        let tmp = tempdir().expect("tempdir");
+        write_plan(
+            tmp.path(),
+            "# Plan\n\n# Tool Request\n- gobuster dir -u http://10.10.10.5 -w /tmp/words.txt\n",
+        )
+        .expect("write plan");
+
+        append_tool_request(
+            tmp.path(),
+            "ffuf -u http://10.10.10.5/FUZZ -w /tmp/words.txt",
+        )
+        .expect("append");
+        let updated = read_plan(tmp.path()).expect("read");
+
+        assert!(updated.contains(
+            "# Tool Request\n- ffuf -u http://10.10.10.5/FUZZ -w /tmp/words.txt\n- gobuster dir -u http://10.10.10.5 -w /tmp/words.txt"
+        ));
+    }
 }
