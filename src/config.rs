@@ -182,15 +182,28 @@ pub fn default_susfile() -> Susfile {
         model: "gpt-4.1".to_string(),
         max_agents_per_time: 2,
         tools: ToolsConfig {
-            cli: vec![CliToolConfig {
-                name: "nmap_targeted_scan".to_string(),
-                description: "Run an nmap aggressive scan against a target host".to_string(),
-                command: "nmap -A <target>".to_string(),
-                args: vec![CliArgConfig {
-                    name: "target".to_string(),
-                    description: "Target hostname or IP to scan".to_string(),
-                }],
-            }],
+            cli: vec![
+                CliToolConfig {
+                    name: "nmap_targeted_scan".to_string(),
+                    description: "Run an nmap aggressive scan against a target host".to_string(),
+                    command: "nmap -A <target>".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "target".to_string(),
+                        description: "Target hostname or IP to scan".to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "nmap_service_scan".to_string(),
+                    description:
+                        "Run nmap service/version scan with default scripts without host discovery"
+                            .to_string(),
+                    command: "nmap -sV -sC -Pn <target>".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "target".to_string(),
+                        description: "Target hostname or IP to scan".to_string(),
+                    }],
+                },
+            ],
         },
         agents: None,
     }

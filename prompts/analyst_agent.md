@@ -37,6 +37,19 @@ Tool outputs are stored automatically in tool_data/Dxxxx.md for your task.
 
 ---
 
+## Mandatory Tool Flow
+
+You MUST call tools in this order for every task:
+1. claim_task(id=<task id from the Task block, e.g. T0001>)
+2. Execute one or more environment tools (or cve tools) needed for the assigned task.
+3. add_note(id, note) with the required structured format.
+4. complete_task(id)
+
+If claim_task fails, stop and record the failure with add_note using status: failure.
+Never end without attempting complete_task(id).
+
+---
+
 ## Required Structured Format
 
 Your note MUST follow this exact structure:

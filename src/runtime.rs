@@ -246,7 +246,7 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
             let args_raw = tc["function"]["arguments"].as_str().unwrap_or("{}");
             let args: Value = serde_json::from_str(args_raw).unwrap_or_else(|_| json!({}));
 
-            log_event(format!("{agent_name} called tool {name}"));
+            log_event(format!("{agent_name} called tool {name} args={args_raw}"));
             let tool_result = execute_tool_call(ctx.clone(), agent_name, name, args.clone());
             let content = match tool_result {
                 Ok(v) => {
@@ -357,7 +357,7 @@ fn execute_tool_call(
             let task = parse_tasks(&plan)
                 .into_iter()
                 .find(|t| t.id == id)
-                .context("task not found")?;
+                .with_context(|| format!("task `{id}` not found in plan.md"))?;
             claim_task(&ctx.root, &task.id, &task.title)?;
             log_event(format!("{caller_agent} claimed task {id}"));
             Ok("claimed".to_string())

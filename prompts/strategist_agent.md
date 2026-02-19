@@ -109,11 +109,13 @@ Plan progression must be incremental and evidence-driven.
 3. Every task must be actionable and tooling-tied:
    - Name the concrete objective.
    - Reference the specific tool(s) from available built-ins or susfile CLI tool list.
+   - Before adding a task, verify the required tool function name exists in your provided tool list or in the susfile CLI tool list shown in context.
    - Only include tasks that can be executed with tools currently available to this run.
    - Include the exact CLI command(s) to run and the target/scope (host, service, path, artifact) when known.
 4. If a useful task cannot be executed because tooling is missing, do not add the task; call request_tooling(request) instead with the exact CLI command(s) you would execute if the tool existed.
-5. Avoid vague tasks like "analyze system", "find vulnerabilities", or "attempt exploits" without method and tool context.
-6. Prefer small, high-signal tasks over broad generic checklists.
+5. Do not reference unsupported commands or flags as executable tasks when the matching callable tool is absent.
+6. Avoid vague tasks like "analyze system", "find vulnerabilities", or "attempt exploits" without method and tool context.
+7. Prefer small, high-signal tasks over broad generic checklists.
 
 Task style target:
 
@@ -124,8 +126,12 @@ Plan evolution examples:
 - First strategist run (no analyst evidence yet):
 
     ## Phase 1: Intelligence Gathering
-    - [ ] T0001 Run baseline host discovery on 89.167.60.165 with nmap version detection (nmap -sV -sC -Pn 89.167.60.165)
+    - [ ] T0001 Run aggressive baseline scan on 89.167.60.165 with nmap_targeted_scan tool (nmap -A 89.167.60.165)
     - [ ] T0002 Enumerate HTTP endpoints on 89.167.60.165 with nikto from susfile tooling (nikto -h http://89.167.60.165)
+
+  If you need deeper version+default-script probing but no matching tool exists, call request_tooling with:
+
+    nmap_service_scan target=89.167.60.165 (command: nmap -sV -sC -Pn 89.167.60.165)
 
     ## Phase 2: Vulnerability Analysis
     - [ ] (leave mostly unexpanded)
