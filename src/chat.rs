@@ -32,6 +32,7 @@ pub fn tools_for_agent(agent: &str, cfg: &Susfile, cve_tools_enabled: bool) -> V
         }
         "analyst_agent" => {
             let mut tools = vec![
+                tool_no_args("read_attack_plan", "Read plan.md (read-only attack plan)"),
                 tool_single_id("claim_task", "Claim task and set to pending"),
                 tool_single_id("complete_task", "Mark task complete"),
                 json!({"type":"function","function":{"name":"add_note","description":"Append note text to notes/<task-id>.md","parameters":{"type":"object","properties":{"id":{"type":"string"},"note":{"type":"string"}},"required":["id","note"]}}}),

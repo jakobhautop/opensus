@@ -39,11 +39,13 @@ Users do not edit runtime prompt files after build; `init` does not scaffold pro
 - `description` (short natural-language behavior)
 - `command` (CLI template, for example `nmap -A <target>`)
 - `args` (argument definitions used to map model-provided parameters into command placeholders)
+- `allowed_ips` (list of IPv4 addresses that tool call arguments are allowed to reference; any detected IP outside this list is blocked at runtime)
 
 Example:
 
 ```json
 {
+  "allowed_ips": ["89.167.60.165"],
   "tools": {
     "cli": [
       {
