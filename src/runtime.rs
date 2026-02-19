@@ -77,7 +77,9 @@ use crate::{
     chat::{create_chat_completion, tools_for_agent},
     config::{default_susfile, load_susfile, Susfile},
     cve,
-    plan::{parse_tasks, read_plan, update_task_status, write_plan, TaskStatus},
+    plan::{
+        append_tool_request, parse_tasks, read_plan, update_task_status, write_plan, TaskStatus,
+    },
     tools::run_cli_tool,
 };
 
@@ -324,6 +326,14 @@ fn execute_tool_call(
             Ok("ok".to_string())
         }
         "read_tool_data" => Ok(read_tool_data(&ctx.root)?),
+        "request_tooling" => {
+            let request = args["request"]
+                .as_str()
+                .context("request_tooling requires request")?;
+            append_tool_request(&ctx.root, request)?;
+            log_event("Tool request appended to plan".to_string());
+            Ok("requested".to_string())
+        }
         "new_analyst" => {
             let task_id = args["task_id"]
                 .as_str()
