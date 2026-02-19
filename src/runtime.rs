@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -290,8 +291,11 @@ fn execute_tool_call(
     name: &str,
     args: Value,
 ) -> Result<String> {
+    enforce_allowed_ips(&ctx.cfg, name, &args)?;
+
     match name {
         "read_plan" => Ok(read_plan(&ctx.root)?),
+        "read_attack_plan" => Ok(read_plan(&ctx.root)?),
         "update_plan" | "write_plan" => {
             let markdown = args["updated_markdown"]
                 .as_str()
@@ -388,6 +392,83 @@ fn execute_tool_call(
         }
         _ => execute_configured_cli_tool(&ctx.cfg, name, &args),
     }
+}
+
+fn enforce_allowed_ips(cfg: &Susfile, tool_name: &str, args: &Value) -> Result<()> {
+    let found_ips = extract_ipv4s_from_json(args);
+    if found_ips.is_empty() {
+        return Ok(());
+    }
+
+    let allowed_ips: HashSet<String> = cfg
+        .allowed_ips
+        .iter()
+        .filter_map(|ip| {
+            ip.parse::<std::net::Ipv4Addr>()
+                .ok()
+                .map(|parsed| parsed.to_string())
+        })
+        .collect();
+
+    let mut disallowed: Vec<String> = found_ips
+        .into_iter()
+        .filter(|ip| !allowed_ips.contains(ip))
+        .collect();
+
+    disallowed.sort();
+    disallowed.dedup();
+
+    if disallowed.is_empty() {
+        return Ok(());
+    }
+
+    bail!(
+        "tool call `{tool_name}` blocked: disallowed IP(s) [{}]. Allowed IPs come from susfile.allowed_ips",
+        disallowed.join(", ")
+    );
+}
+
+fn extract_ipv4s_from_json(value: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+
+    match value {
+        Value::String(s) => out.extend(extract_ipv4s_from_text(s)),
+        Value::Array(items) => {
+            for item in items {
+                out.extend(extract_ipv4s_from_json(item));
+            }
+        }
+        Value::Object(map) => {
+            for v in map.values() {
+                out.extend(extract_ipv4s_from_json(v));
+            }
+        }
+        _ => {}
+    }
+
+    out
+}
+
+fn extract_ipv4s_from_text(text: &str) -> Vec<String> {
+    let mut ips = Vec::new();
+    let mut token = String::new();
+
+    for ch in text.chars().chain(std::iter::once(' ')) {
+        if ch.is_ascii_digit() || ch == '.' {
+            token.push(ch);
+            continue;
+        }
+
+        if token.matches('.').count() == 3 {
+            if let Ok(parsed) = token.parse::<std::net::Ipv4Addr>() {
+                ips.push(parsed.to_string());
+            }
+        }
+
+        token.clear();
+    }
+
+    ips
 }
 
 fn spawn_agent(
@@ -668,6 +749,36 @@ mod tests {
         let p = read_plan(tmp.path()).expect("read plan");
         assert!(p.contains("- [!] T001"));
     }
+    #[test]
+    fn blocks_tool_calls_with_disallowed_ip_arguments() {
+        let mut cfg = default_susfile();
+        cfg.allowed_ips = vec!["89.167.60.165".to_string()];
+
+        let err = enforce_allowed_ips(
+            &cfg,
+            "nmap_targeted_scan",
+            &json!({"target": "10.10.10.5", "notes": "scan 10.10.10.5 now"}),
+        )
+        .expect_err("expected blocked IP");
+
+        assert!(err
+            .to_string()
+            .contains("tool call `nmap_targeted_scan` blocked"));
+    }
+
+    #[test]
+    fn allows_tool_calls_when_all_ips_are_approved() {
+        let mut cfg = default_susfile();
+        cfg.allowed_ips = vec!["89.167.60.165".to_string()];
+
+        enforce_allowed_ips(
+            &cfg,
+            "nmap_targeted_scan",
+            &json!({"target": "89.167.60.165", "comment": "scan host 89.167.60.165"}),
+        )
+        .expect("approved IP should pass");
+    }
+
     #[test]
     fn reset_keeps_brief_and_susfile_and_clears_runtime_artifacts() {
         unsafe {

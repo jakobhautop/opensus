@@ -8,6 +8,8 @@ pub struct Susfile {
     pub api: String,
     pub model: String,
     pub max_agents_per_time: usize,
+    #[serde(default)]
+    pub allowed_ips: Vec<String>,
     pub tools: ToolsConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentsConfig>,
@@ -64,6 +66,11 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
     if cfg.max_agents_per_time == 0 {
         bail!("susfile.max_agents_per_time must be > 0");
     }
+
+    for ip in &cfg.allowed_ips {
+        ip.parse::<std::net::Ipv4Addr>()
+            .with_context(|| format!("susfile.allowed_ips contains invalid IPv4 address `{ip}`"))?;
+    }
     if cfg.tools.cli.is_empty() {
         bail!("susfile.tools.cli must include at least one CLI tool definition");
     }
@@ -71,6 +78,7 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
     let mut seen_tool_names = std::collections::HashSet::new();
     let reserved_tool_names = [
         "read_plan",
+        "read_attack_plan",
         "write_plan",
         "update_plan",
         "spawn_agent",
@@ -181,6 +189,7 @@ pub fn default_susfile() -> Susfile {
         api: "openai".to_string(),
         model: "gpt-4.1".to_string(),
         max_agents_per_time: 2,
+        allowed_ips: vec!["127.0.0.1".to_string()],
         tools: ToolsConfig {
             cli: vec![
                 CliToolConfig {
@@ -226,6 +235,17 @@ mod tests {
         cfg.tools.cli[0].command = "nmap -A <target> <extra>".to_string();
         let err = validate_susfile(&cfg).expect_err("expected validation error");
         assert!(err.to_string().contains("<extra>"));
+    }
+
+    #[test]
+    fn validation_fails_for_invalid_allowed_ip() {
+        let mut cfg = default_susfile();
+        cfg.allowed_ips = vec!["not-an-ip".to_string()];
+
+        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        assert!(err
+            .to_string()
+            .contains("susfile.allowed_ips contains invalid IPv4 address"));
     }
 
     #[test]
