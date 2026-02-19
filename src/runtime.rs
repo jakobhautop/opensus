@@ -395,25 +395,55 @@ fn execute_tool_call(
 }
 
 fn enforce_allowed_ips(cfg: &Susfile, tool_name: &str, args: &Value) -> Result<()> {
-    let found_ips = extract_ipv4s_from_json(args);
-    if found_ips.is_empty() {
-        return Ok(());
-    }
-
-    let allowed_ips: HashSet<String> = cfg
-        .allowed_ips
+    let allowed_hosts: HashSet<String> = cfg
+        .allowed_hosts
         .iter()
-        .filter_map(|ip| {
-            ip.parse::<std::net::Ipv4Addr>()
-                .ok()
+        .map(|host| {
+            host.parse::<std::net::Ipv4Addr>()
                 .map(|parsed| parsed.to_string())
+                .unwrap_or_else(|_| host.to_lowercase())
         })
         .collect();
 
-    let mut disallowed: Vec<String> = found_ips
+    let mut disallowed: Vec<String> = extract_ipv4s_from_json(args)
         .into_iter()
-        .filter(|ip| !allowed_ips.contains(ip))
+        .filter(|ip| !allowed_hosts.contains(ip))
         .collect();
+
+    let hostnames = extract_url_hosts_from_json(args);
+    if !hostnames.is_empty() {
+        let mut blocked_hosts = Vec::new();
+        for host in hostnames {
+            if let Ok(parsed) = host.parse::<std::net::Ipv4Addr>() {
+                if !allowed_hosts.contains(&parsed.to_string()) {
+                    disallowed.push(parsed.to_string());
+                }
+                continue;
+            }
+
+            if host.eq_ignore_ascii_case("localhost") {
+                if !(allowed_hosts.contains("127.0.0.1") || allowed_hosts.contains("localhost")) {
+                    disallowed.push("127.0.0.1".to_string());
+                }
+                continue;
+            }
+
+            if allowed_hosts.contains(&host.to_lowercase()) {
+                continue;
+            }
+
+            blocked_hosts.push(host);
+        }
+
+        blocked_hosts.sort();
+        blocked_hosts.dedup();
+        if !blocked_hosts.is_empty() {
+            bail!(
+                "tool call `{tool_name}` blocked: hostname(s) [{}] are not allowed. Use entries from susfile.allowed_hosts",
+                blocked_hosts.join(", ")
+            );
+        }
+    }
 
     disallowed.sort();
     disallowed.dedup();
@@ -423,7 +453,7 @@ fn enforce_allowed_ips(cfg: &Susfile, tool_name: &str, args: &Value) -> Result<(
     }
 
     bail!(
-        "tool call `{tool_name}` blocked: disallowed IP(s) [{}]. Allowed IPs come from susfile.allowed_ips",
+        "tool call `{tool_name}` blocked: disallowed IP(s) [{}]. Allowed hosts come from susfile.allowed_hosts",
         disallowed.join(", ")
     );
 }
@@ -469,6 +499,71 @@ fn extract_ipv4s_from_text(text: &str) -> Vec<String> {
     }
 
     ips
+}
+
+fn extract_url_hosts_from_json(value: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+
+    match value {
+        Value::String(s) => out.extend(extract_url_hosts_from_text(s)),
+        Value::Array(items) => {
+            for item in items {
+                out.extend(extract_url_hosts_from_json(item));
+            }
+        }
+        Value::Object(map) => {
+            for v in map.values() {
+                out.extend(extract_url_hosts_from_json(v));
+            }
+        }
+        _ => {}
+    }
+
+    out
+}
+
+fn extract_url_hosts_from_text(text: &str) -> Vec<String> {
+    let mut hosts = Vec::new();
+
+    for token in text.split_whitespace() {
+        let candidate = token.trim_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ',' | ';'
+            )
+        });
+
+        let rest = if let Some(rem) = candidate.strip_prefix("http://") {
+            rem
+        } else if let Some(rem) = candidate.strip_prefix("https://") {
+            rem
+        } else {
+            continue;
+        };
+
+        let host_port = rest.split(['/', '?', '#']).next().unwrap_or("").trim();
+
+        if host_port.is_empty() {
+            continue;
+        }
+
+        let host = if host_port.starts_with('[') {
+            host_port
+                .split(']')
+                .next()
+                .unwrap_or("")
+                .trim_start_matches('[')
+                .to_string()
+        } else {
+            host_port.split(':').next().unwrap_or("").to_string()
+        };
+
+        if !host.is_empty() {
+            hosts.push(host);
+        }
+    }
+
+    hosts
 }
 
 fn spawn_agent(
@@ -752,7 +847,7 @@ mod tests {
     #[test]
     fn blocks_tool_calls_with_disallowed_ip_arguments() {
         let mut cfg = default_susfile();
-        cfg.allowed_ips = vec!["89.167.60.165".to_string()];
+        cfg.allowed_hosts = vec!["89.167.60.165".to_string()];
 
         let err = enforce_allowed_ips(
             &cfg,
@@ -769,7 +864,7 @@ mod tests {
     #[test]
     fn allows_tool_calls_when_all_ips_are_approved() {
         let mut cfg = default_susfile();
-        cfg.allowed_ips = vec!["89.167.60.165".to_string()];
+        cfg.allowed_hosts = vec!["89.167.60.165".to_string()];
 
         enforce_allowed_ips(
             &cfg,
@@ -777,6 +872,44 @@ mod tests {
             &json!({"target": "89.167.60.165", "comment": "scan host 89.167.60.165"}),
         )
         .expect("approved IP should pass");
+    }
+
+    #[test]
+    fn blocks_tool_calls_with_hostname_urls() {
+        let mut cfg = default_susfile();
+        cfg.allowed_hosts = vec!["89.167.60.165".to_string()];
+
+        let err = enforce_allowed_ips(&cfg, "curl_raw", &json!({"args": "-i http://example.com/"}))
+            .expect_err("expected blocked hostname");
+
+        assert!(err.to_string().contains("hostname(s)"));
+        assert!(err.to_string().contains("example.com"));
+    }
+
+    #[test]
+    fn allows_tool_calls_with_allowed_hostname_url() {
+        let mut cfg = default_susfile();
+        cfg.allowed_hosts = vec!["example.com".to_string()];
+
+        enforce_allowed_ips(
+            &cfg,
+            "curl_raw",
+            &json!({"args": "-i https://example.com/"}),
+        )
+        .expect("allowed hostname should pass");
+    }
+
+    #[test]
+    fn allows_tool_calls_with_localhost_when_loopback_allowed() {
+        let mut cfg = default_susfile();
+        cfg.allowed_hosts = vec!["127.0.0.1".to_string()];
+
+        enforce_allowed_ips(
+            &cfg,
+            "curl_raw",
+            &json!({"args": "-i http://localhost:8080/"}),
+        )
+        .expect("localhost should map to loopback");
     }
 
     #[test]
