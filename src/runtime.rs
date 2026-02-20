@@ -25,6 +25,30 @@ fn log_event(message: impl AsRef<str>) {
     println!("[opensus] {}", message.as_ref());
 }
 
+fn heartbeat_capacity_status(ctx: &RuntimeCtx) -> String {
+    let analysts = ctx.active_analysts.load(Ordering::SeqCst);
+    let strategists = ctx.active_strategists.load(Ordering::SeqCst);
+
+    let mut lines = Vec::new();
+    if analysts >= ctx.cfg.max_agents_per_time {
+        lines.push("Max number of analysts are running! Do NOT spawn new analyst.".to_string());
+    }
+    if strategists >= ctx.cfg.max_strategists_per_time {
+        lines.push(
+            "Max number of strategist are running! Do NOT spawn a new strategist.".to_string(),
+        );
+    }
+
+    if lines.is_empty() {
+        "Capacity status: analyst and strategist slots are available.".to_string()
+    } else {
+        lines.join(
+            "
+",
+        )
+    }
+}
+
 fn map_spawn_role_to_agent(role: &str) -> Result<&'static str> {
     match role {
         "analyst" => Ok("analyst_agent"),
@@ -54,7 +78,12 @@ fn role_custom_prompt_path(cfg: &Susfile, agent_name: &str) -> Option<String> {
     }
 }
 
-fn render_agent_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<String> {
+fn render_agent_prompt(
+    cfg: &Susfile,
+    root: &Path,
+    agent_name: &str,
+    capacity_status: &str,
+) -> Result<String> {
     let base = embedded_prompt(agent_name)?;
     let custom_prompt = if let Some(path) = role_custom_prompt_path(cfg, agent_name) {
         let prompt_path = root.join(path);
@@ -72,7 +101,10 @@ fn render_agent_prompt(cfg: &Susfile, root: &Path, agent_name: &str) -> Result<S
 
     Ok(base
         .replace("{{USER_INPUT}}", &custom_prompt)
-        .replace("{{HEARTBEAT_MESSAGE}}", HEARTBEAT_PROMPT)
+        .replace(
+            "{{HEARTBEAT_MESSAGE}}",
+            &HEARTBEAT_PROMPT.replace("{{CAPACITY_STATUS}}", capacity_status),
+        )
         .replace("{{SUSFILE}}", &susfile_json))
 }
 
@@ -81,7 +113,8 @@ use crate::{
     config::{default_susfile, load_susfile, Susfile},
     cve,
     plan::{
-        append_tool_request, parse_tasks, read_plan, update_task_status, write_plan, TaskStatus,
+        append_review_finding, append_tool_request, mark_review_findings_read, parse_tasks,
+        read_plan, update_task_status, write_plan, TaskStatus,
     },
     tools::run_cli_tool,
 };
@@ -93,6 +126,7 @@ struct RuntimeCtx {
     api_key: Arc<String>,
     client: Client,
     active_analysts: Arc<AtomicUsize>,
+    active_strategists: Arc<AtomicUsize>,
     handles: Arc<std::sync::Mutex<Vec<JoinHandle<Result<()>>>>>,
 }
 
@@ -183,8 +217,19 @@ async fn run_heartbeat(root: &Path) -> Result<()> {
         api_key: Arc::new(api_key),
         client: Client::new(),
         active_analysts: Arc::new(AtomicUsize::new(0)),
+        active_strategists: Arc::new(AtomicUsize::new(0)),
         handles: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
+
+    let analysts_at_limit =
+        ctx.active_analysts.load(Ordering::SeqCst) >= ctx.cfg.max_agents_per_time;
+    let strategists_at_limit =
+        ctx.active_strategists.load(Ordering::SeqCst) >= ctx.cfg.max_strategists_per_time;
+
+    if analysts_at_limit && strategists_at_limit {
+        log_event("Heartbeat skipped: analyst and strategist capacities are both reached");
+        return Ok(());
+    }
 
     log_event("Spawn dispatch_agent");
     run_llm_agent(ctx.clone(), "dispatch_agent", None).await?;
@@ -220,8 +265,13 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
         log_event(format!("{agent_name} started"));
     }
 
-    let system_prompt =
-        build_system_prompt(&ctx.cfg, &ctx.root, agent_name, task_label.as_deref())?;
+    let system_prompt = build_system_prompt(
+        &ctx.cfg,
+        &ctx.root,
+        agent_name,
+        task_label.as_deref(),
+        &heartbeat_capacity_status(&ctx),
+    )?;
     let cve_tools_enabled = cve::ensure_local_db().is_ok();
     let tools = tools_for_agent(agent_name, &ctx.cfg, cve_tools_enabled);
 
@@ -316,10 +366,17 @@ fn execute_tool_call(
         }
         "read_note" => {
             let id = args["id"].as_str().context("read_note requires id")?;
-            Ok(
-                fs::read_to_string(ctx.root.join("notes").join(format!("{id}.md")))
-                    .with_context(|| format!("failed to read notes/{id}.md"))?,
-            )
+            let note = fs::read_to_string(ctx.root.join("notes").join(format!("{id}.md")))
+                .with_context(|| format!("failed to read notes/{id}.md"))?;
+            if caller_agent == "strategist_agent" {
+                let marked = mark_review_findings_read(&ctx.root, id)?;
+                if marked > 0 {
+                    log_event(format!(
+                        "Review findings updated (task {id}: marked {marked} item(s) read)"
+                    ));
+                }
+            }
+            Ok(note)
         }
         "read_attack_model" => Ok(read_attack_model(&ctx.root)?),
         "update_attack_model" => {
@@ -594,11 +651,22 @@ fn spawn_agent(
         return Ok("analyst capacity reached".to_string());
     }
 
+    if agent == "strategist_agent"
+        && ctx.active_strategists.load(Ordering::SeqCst) >= ctx.cfg.max_strategists_per_time
+    {
+        log_event("strategist capacity reached".to_string());
+        return Ok("strategist capacity reached".to_string());
+    }
+
     if agent == "analyst_agent" {
         if task_id.is_none() {
             bail!("spawn_agent with name=analyst requires task_id");
         }
         ctx.active_analysts.fetch_add(1, Ordering::SeqCst);
+    }
+
+    if agent == "strategist_agent" {
+        ctx.active_strategists.fetch_add(1, Ordering::SeqCst);
     }
 
     let ctx_clone = ctx.clone();
@@ -615,7 +683,9 @@ fn spawn_agent(
             if let (Some(task_id), Err(err)) = (spawned_task_id.as_deref(), result.as_ref()) {
                 if let Err(mark_err) = mark_task_crashed(&ctx_clone.root, task_id, &err.to_string())
                 {
-                    log_event(format!("failed to mark task {task_id} as crashed: {mark_err}"));
+                    log_event(format!(
+                        "failed to mark task {task_id} as crashed: {mark_err}"
+                    ));
                 } else {
                     log_event(format!("Task {task_id} marked crashed after analyst error"));
                 }
@@ -623,6 +693,9 @@ fn spawn_agent(
         }
         if agent_name == "analyst_agent" {
             ctx_clone.active_analysts.fetch_sub(1, Ordering::SeqCst);
+        }
+        if agent_name == "strategist_agent" {
+            ctx_clone.active_strategists.fetch_sub(1, Ordering::SeqCst);
         }
         result
     });
@@ -638,8 +711,9 @@ fn build_system_prompt(
     root: &Path,
     agent_name: &str,
     task_hint: Option<&str>,
+    capacity_status: &str,
 ) -> Result<String> {
-    let base = render_agent_prompt(cfg, root, agent_name)?;
+    let base = render_agent_prompt(cfg, root, agent_name, capacity_status)?;
 
     let mut tools_list = String::new();
     for tool in &cfg.tools.cli {
@@ -743,6 +817,10 @@ fn add_note(root: &Path, task_id: &str, note: &str) -> Result<()> {
     content.push_str(&format!("- {note}\n"));
     fs::write(path, content).context("failed to append note")?;
     log_event(format!("Note appended to task {task_id}"));
+
+    append_review_finding(root, &format!("{task_id} | note | {note}"))?;
+    log_event(format!("Review finding appended for note {task_id}"));
+
     Ok(())
 }
 
@@ -787,6 +865,24 @@ args: {}
     ));
 
     fs::write(path, content).context("failed to write tool data")?;
+    let compact_output = output.replace('\n', " ");
+    let summary = compact_output.chars().take(160).collect::<String>();
+    let truncated = if compact_output.chars().count() > 160 {
+        format!("{summary}...")
+    } else {
+        summary
+    };
+    append_review_finding(
+        root,
+        &format!(
+            "{task_id} | tool:{tool_name} | args={} | output={truncated}",
+            args
+        ),
+    )?;
+    log_event(format!(
+        "Review finding appended for tool output {task_id}/{tool_name}"
+    ));
+
     Ok(())
 }
 
@@ -849,6 +945,28 @@ fn write_if_missing(path: &Path, content: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strategist_spawn_respects_capacity_limit() {
+        let mut cfg = default_susfile();
+        cfg.max_strategists_per_time = 1;
+
+        let ctx = RuntimeCtx {
+            root: Arc::new(std::env::temp_dir()),
+            cfg,
+            api_key: Arc::new("test-key".to_string()),
+            client: Client::new(),
+            active_analysts: Arc::new(AtomicUsize::new(0)),
+            active_strategists: Arc::new(AtomicUsize::new(1)),
+            handles: Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+
+        let result = spawn_agent(&ctx, "dispatch_agent", "strategist", None)
+            .expect("spawn should return capacity result");
+
+        assert_eq!(result, "strategist capacity reached");
+        assert_eq!(ctx.active_strategists.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn crash_marking_updates_plan() {
@@ -977,6 +1095,46 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_capacity_status_reports_limits() {
+        let mut cfg = default_susfile();
+        cfg.max_agents_per_time = 1;
+        cfg.max_strategists_per_time = 1;
+
+        let ctx = RuntimeCtx {
+            root: Arc::new(std::env::temp_dir()),
+            cfg,
+            api_key: Arc::new("test-key".to_string()),
+            client: Client::new(),
+            active_analysts: Arc::new(AtomicUsize::new(1)),
+            active_strategists: Arc::new(AtomicUsize::new(1)),
+            handles: Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+
+        let status = heartbeat_capacity_status(&ctx);
+
+        assert!(status.contains("Max number of analysts are running"));
+        assert!(status.contains("Max number of strategist are running"));
+    }
+
+    #[test]
+    fn build_system_prompt_injects_capacity_status_into_heartbeat_message() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let cfg = default_susfile();
+
+        let rendered = build_system_prompt(
+            &cfg,
+            tmp.path(),
+            "dispatch_agent",
+            None,
+            "Max number of analysts are running! Do NOT spawn new analyst.",
+        )
+        .expect("system prompt should render");
+
+        assert!(rendered.contains("Max number of analysts are running! Do NOT spawn new analyst."));
+        assert!(!rendered.contains("{{CAPACITY_STATUS}}"));
+    }
+
+    #[test]
     fn build_system_prompt_injects_custom_user_prompt() {
         let tmp = tempfile::tempdir().expect("tmp");
         fs::write(
@@ -994,8 +1152,14 @@ mod tests {
             }),
         });
 
-        let rendered = build_system_prompt(&cfg, tmp.path(), "report_agent", None)
-            .expect("system prompt should render");
+        let rendered = build_system_prompt(
+            &cfg,
+            tmp.path(),
+            "report_agent",
+            None,
+            "Capacity status: analyst and strategist slots are available.",
+        )
+        .expect("system prompt should render");
 
         assert!(rendered.contains("<User input>"));
         assert!(rendered.contains("Focus only on web targets."));

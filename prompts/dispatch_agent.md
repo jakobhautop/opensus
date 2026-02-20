@@ -51,7 +51,14 @@ After calling `read_plan()`:
 
 ### 3. Otherwise (status is not complete):
 
-#### 3a. If there are explicit unchecked task IDs matching `- [ ] T####`
+#### 3a. If `# Review Findings` contains unchecked items (`- [ ] ...`)
+→ Call `new_strategist()`
+
+Prioritize strategist so unread findings are reviewed and correlated before dispatching more execution.
+
+---
+
+#### 3b. If there are explicit unchecked task IDs matching `- [ ] T####`
 → Spawn exactly one analyst for the first unchecked task:
 
     new_analyst(task_id)
@@ -65,7 +72,7 @@ Only dispatch analysts for concrete task lines that include an explicit task ID.
 
 ---
 
-#### 3a.4. If there are crashed task IDs matching `- [!] T####`
+#### 3c. If there are crashed task IDs matching `- [!] T####`
 → Reassign exactly one crashed task by spawning an analyst for the first crashed task in top-down order:
 
     new_analyst(task_id)
@@ -75,7 +82,7 @@ Do not invent IDs; only retry explicit crashed task IDs present in plan.md.
 
 ---
 
-#### 3a.5. If there are unchecked checklist bullets without explicit task IDs
+#### 3d. If there are unchecked checklist bullets without explicit task IDs
 (e.g., placeholders like `- [ ] (To be expanded...)`)
 → Call `new_strategist()`
 
@@ -107,7 +114,7 @@ In this example there is no unchecked `T####` task to give an analyst, so spawn 
 
 ---
 
-#### 3b. If all tasks are checked (`- [x]`) or pending (`- [~]`) but status is not complete
+#### 3e. If all tasks are checked (`- [x]`) or pending (`- [~]`) but status is not complete
 → Call `new_strategist()`
 
 This allows expansion or refinement of the plan.
@@ -132,6 +139,7 @@ Only spawn one per heartbeat.
 ### `new_strategist()`
 Use when:
 - No plan exists
+- `# Review Findings` has unchecked items
 - There are no open tasks and status is not complete
 - The plan only has unchecked placeholders without explicit task IDs
 

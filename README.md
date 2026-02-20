@@ -31,6 +31,13 @@ Users do not edit runtime prompt files after build; `init` does not scaffold pro
 - empty `plan.md`
 - `brief.md`
 
+## Concurrency limits
+
+`susfile` supports separate concurrency limits:
+
+- `max_agents_per_time`: maximum concurrent analyst agents
+- `max_strategists_per_time`: maximum concurrent strategist agents (defaults to `1` when omitted)
+
 ## Susfile CLI tools
 
 `susfile` now defines analyst CLI tooling under `tools.cli`. Each tool includes:
