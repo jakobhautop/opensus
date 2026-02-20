@@ -63,6 +63,15 @@ Do not spawn multiple analysts.
 Never invent or infer a new task ID (for example, do **not** create `T0003` unless it is explicitly present in plan.md).
 Only dispatch analysts for concrete task lines that include an explicit task ID.
 
+---
+
+#### 3a.4. If there are crashed task IDs matching `- [!] T####`
+→ Reassign exactly one crashed task by spawning an analyst for the first crashed task in top-down order:
+
+    new_analyst(task_id)
+
+Treat crashed tasks as retry-eligible and prioritize deterministic top-down ordering.
+Do not invent IDs; only retry explicit crashed task IDs present in plan.md.
 
 ---
 
@@ -115,6 +124,7 @@ Must be called on every heartbeat before making a decision.
 ### `new_analyst(task_id)`
 Spawns an analyst agent for a specific task.
 
+Use for open tasks (`- [ ] T####`) and crashed tasks (`- [!] T####`) that must be retried.
 Only spawn one per heartbeat.
 
 ---

@@ -603,6 +603,7 @@ fn spawn_agent(
 
     let ctx_clone = ctx.clone();
     let agent_name = agent.to_string();
+    let spawned_task_id = task_id.clone();
     if let Some(id) = task_id.as_deref() {
         log_event(format!("Spawn {agent} for task {id}"));
     } else {
@@ -610,6 +611,16 @@ fn spawn_agent(
     }
     let handle = tokio::spawn(async move {
         let result = run_llm_agent(ctx_clone.clone(), &agent_name, task_id).await;
+        if agent_name == "analyst_agent" {
+            if let (Some(task_id), Err(err)) = (spawned_task_id.as_deref(), result.as_ref()) {
+                if let Err(mark_err) = mark_task_crashed(&ctx_clone.root, task_id, &err.to_string())
+                {
+                    log_event(format!("failed to mark task {task_id} as crashed: {mark_err}"));
+                } else {
+                    log_event(format!("Task {task_id} marked crashed after analyst error"));
+                }
+            }
+        }
         if agent_name == "analyst_agent" {
             ctx_clone.active_analysts.fetch_sub(1, Ordering::SeqCst);
         }
