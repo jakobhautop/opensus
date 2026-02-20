@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use chrono::Local;
 use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
@@ -22,7 +23,8 @@ const HEARTBEAT_EKG: &str =
     r"____/‾\____/\/\_____/‾‾\____/‾\____/\/\/\_____/‾‾\____________________";
 
 fn log_event(message: impl AsRef<str>) {
-    println!("[opensus] {}", message.as_ref());
+    let timestamp = Local::now().format("%d/%m/%y  %H:%M:%S");
+    println!("[{timestamp}] [opensus] {}", message.as_ref());
 }
 
 fn heartbeat_capacity_status(ctx: &RuntimeCtx) -> String {
