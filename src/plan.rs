@@ -129,6 +129,59 @@ pub fn append_tool_request(root: &Path, request: &str) -> Result<()> {
     write_plan(root, &(lines.join("\n") + "\n"))
 }
 
+pub fn append_review_finding(root: &Path, finding: &str) -> Result<()> {
+    let markdown = read_plan(root)?;
+    let mut lines: Vec<String> = markdown.lines().map(ToString::to_string).collect();
+
+    if let Some(header_idx) = lines
+        .iter()
+        .position(|line| line.trim().eq_ignore_ascii_case("# Review Findings"))
+    {
+        let mut insert_idx = header_idx + 1;
+        while insert_idx < lines.len() && lines[insert_idx].trim().is_empty() {
+            insert_idx += 1;
+        }
+        lines.insert(insert_idx, format!("- [ ] {}", finding.trim()));
+    } else {
+        if !lines.is_empty() && !lines.last().is_some_and(|line| line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push("# Review Findings".to_string());
+        lines.push(format!("- [ ] {}", finding.trim()));
+    }
+
+    write_plan(root, &(lines.join("\n") + "\n"))
+}
+
+pub fn mark_review_findings_read(root: &Path, task_id: &str) -> Result<usize> {
+    let markdown = read_plan(root)?;
+    let mut changed = 0usize;
+    let mut out = Vec::new();
+
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
+            let starts_with_id = rest.starts_with(task_id)
+                && rest
+                    .chars()
+                    .nth(task_id.len())
+                    .is_none_or(|c| c.is_whitespace() || c == '|');
+            if starts_with_id {
+                out.push(format!("- [x] {rest}"));
+                changed += 1;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+
+    if changed > 0 {
+        write_plan(root, &(out.join("\n") + "\n"))?;
+    }
+
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +235,36 @@ mod tests {
             "Perform network scan with version detection"
         );
         assert_eq!(tasks[0].status, TaskStatus::Open);
+    }
+
+    #[test]
+    fn append_review_finding_creates_section_when_missing() {
+        let tmp = tempdir().expect("tempdir");
+        write_plan(tmp.path(), "# Plan\n\n- [ ] T0001 - Scan target\n").expect("write plan");
+
+        append_review_finding(tmp.path(), "T0001 | note | Found HTTP 200 on /admin")
+            .expect("append");
+        let updated = read_plan(tmp.path()).expect("read");
+
+        assert!(
+            updated.contains("# Review Findings\n- [ ] T0001 | note | Found HTTP 200 on /admin\n")
+        );
+    }
+
+    #[test]
+    fn mark_review_findings_read_marks_only_matching_task_id() {
+        let tmp = tempdir().expect("tempdir");
+        write_plan(
+            tmp.path(),
+            "# Plan\n\n# Review Findings\n- [ ] T0001 | note | Found admin panel\n- [ ] T0002 | tool:nmap | Open ports\n",
+        )
+        .expect("write plan");
+
+        let changed = mark_review_findings_read(tmp.path(), "T0001").expect("mark read");
+        let updated = read_plan(tmp.path()).expect("read");
+
+        assert_eq!(changed, 1);
+        assert!(updated.contains("- [x] T0001 | note | Found admin panel"));
+        assert!(updated.contains("- [ ] T0002 | tool:nmap | Open ports"));
     }
 }

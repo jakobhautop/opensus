@@ -8,6 +8,8 @@ pub struct Susfile {
     pub api: String,
     pub model: String,
     pub max_agents_per_time: usize,
+    #[serde(default = "default_max_strategists_per_time")]
+    pub max_strategists_per_time: usize,
     #[serde(default, alias = "allowed_ips")]
     pub allowed_hosts: Vec<String>,
     pub tools: ToolsConfig,
@@ -49,6 +51,10 @@ pub struct CliArgConfig {
     pub description: String,
 }
 
+fn default_max_strategists_per_time() -> usize {
+    1
+}
+
 pub fn load_susfile(root: &Path) -> Result<Susfile> {
     let content = fs::read_to_string(root.join("susfile")).context("failed to read susfile")?;
     let cfg: Susfile = serde_json::from_str(&content).context("susfile must be valid JSON")?;
@@ -65,6 +71,9 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
     }
     if cfg.max_agents_per_time == 0 {
         bail!("susfile.max_agents_per_time must be > 0");
+    }
+    if cfg.max_strategists_per_time == 0 {
+        bail!("susfile.max_strategists_per_time must be > 0");
     }
 
     for host in &cfg.allowed_hosts {
@@ -204,6 +213,7 @@ pub fn default_susfile() -> Susfile {
         api: "openai".to_string(),
         model: "gpt-4.1".to_string(),
         max_agents_per_time: 2,
+        max_strategists_per_time: 1,
         allowed_hosts: vec!["127.0.0.1".to_string()],
         tools: ToolsConfig {
             cli: vec![
@@ -394,6 +404,42 @@ mod tests {
         assert!(names.contains("vmdk_strings"));
         assert!(names.contains("vmdk_binwalk"));
         assert!(names.contains("list_wordlists"));
+    }
+
+    #[test]
+    fn load_defaults_max_strategists_per_time_when_missing() {
+        let cfg: Susfile = serde_json::from_str(
+            r#"{
+                "api": "openai",
+                "model": "gpt-4.1",
+                "max_agents_per_time": 1,
+                "allowed_hosts": ["127.0.0.1"],
+                "tools": {
+                    "cli": [
+                        {
+                            "name": "nmap_targeted_scan",
+                            "description": "Run scan",
+                            "command": "nmap -A <target>",
+                            "args": [{"name": "target", "description": "Target"}]
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .expect("missing max_strategists_per_time should deserialize");
+
+        assert_eq!(cfg.max_strategists_per_time, 1);
+    }
+
+    #[test]
+    fn validation_fails_for_zero_max_strategists_per_time() {
+        let mut cfg = default_susfile();
+        cfg.max_strategists_per_time = 0;
+
+        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        assert!(err
+            .to_string()
+            .contains("susfile.max_strategists_per_time must be > 0"));
     }
 
     #[test]

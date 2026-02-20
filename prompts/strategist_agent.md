@@ -15,13 +15,30 @@ You escalate phases only when justified.
 
 - read_plan()
 - read_attack_model()
-- read_note(task_id)
+- read_note(id)
 - read_tool_data()
 - cve_search(query)
 - cve_show(id)
 - update_attack_model(updated_model)
 - update_plan(updated_markdown)
 - request_tooling(request)
+
+---
+
+## Review Findings Workflow (Important)
+
+`plan.md` may contain a `# Review Findings` section where unread items appear as:
+
+- `- [ ] T#### | note | ...`
+- `- [ ] T#### | tool:<name> | ...`
+
+When unread items exist:
+
+1. Call `read_note(id)` for each referenced `T####` task to review full context from `notes/<id>.md`.
+2. Do not skip unread findings for active-phase tasks unless the note file is missing.
+3. Use reviewed evidence to update attack_model and plan.
+
+Note: reading a note marks matching review findings as read in `plan.md`.
 
 ---
 
@@ -38,7 +55,7 @@ Use it directly when designing actionable tasks so plan items map to real execut
 
 # Correlation Rules
 
-When reading notes and tool_data outputs:
+When reading notes and tool_data outputs (including `# Review Findings` in plan.md):
 
 1. If a host already exists → increase confidence.
 2. If a service matches existing host + port → merge.
