@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct Susfile {
     pub api: String,
     pub model: String,
+    #[serde(default = "default_secs_between_tics")]
+    pub secs_between_tics: u64,
     pub max_agents_per_time: usize,
     #[serde(default = "default_max_strategists_per_time")]
     pub max_strategists_per_time: usize,
@@ -55,6 +57,10 @@ fn default_max_strategists_per_time() -> usize {
     1
 }
 
+fn default_secs_between_tics() -> u64 {
+    30
+}
+
 pub fn load_susfile(root: &Path) -> Result<Susfile> {
     let content = fs::read_to_string(root.join("susfile")).context("failed to read susfile")?;
     let cfg: Susfile = serde_json::from_str(&content).context("susfile must be valid JSON")?;
@@ -71,6 +77,9 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
     }
     if cfg.max_agents_per_time == 0 {
         bail!("susfile.max_agents_per_time must be > 0");
+    }
+    if cfg.secs_between_tics == 0 {
+        bail!("susfile.secs_between_tics must be > 0");
     }
     if cfg.max_strategists_per_time == 0 {
         bail!("susfile.max_strategists_per_time must be > 0");
@@ -212,6 +221,7 @@ pub fn default_susfile() -> Susfile {
     Susfile {
         api: "openai".to_string(),
         model: "gpt-4.1".to_string(),
+        secs_between_tics: 30,
         max_agents_per_time: 2,
         max_strategists_per_time: 1,
         allowed_hosts: vec!["127.0.0.1".to_string()],
@@ -423,6 +433,7 @@ mod tests {
             r#"{
                 "api": "openai",
                 "model": "gpt-4.1",
+                "secs_between_tics": 30,
                 "max_agents_per_time": 1,
                 "allowed_hosts": ["127.0.0.1"],
                 "tools": {
@@ -459,6 +470,7 @@ mod tests {
             r#"{
                 "api": "openai",
                 "model": "gpt-4.1",
+                "secs_between_tics": 30,
                 "max_agents_per_time": 1,
                 "allowed_ips": ["127.0.0.1"],
                 "tools": {
@@ -512,5 +524,41 @@ mod tests {
         assert!(err
             .to_string()
             .contains("susfile.agents.analyst.prompt must not be empty"));
+    }
+
+    #[test]
+    fn load_defaults_secs_between_tics_when_missing() {
+        let cfg: Susfile = serde_json::from_str(
+            r#"{
+                "api": "openai",
+                "model": "gpt-4.1",
+                "max_agents_per_time": 1,
+                "allowed_hosts": ["127.0.0.1"],
+                "tools": {
+                    "cli": [
+                        {
+                            "name": "nmap_targeted_scan",
+                            "description": "Run scan",
+                            "command": "nmap -A <target>",
+                            "args": [{"name": "target", "description": "Target"}]
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .expect("missing secs_between_tics should deserialize");
+
+        assert_eq!(cfg.secs_between_tics, 30);
+    }
+
+    #[test]
+    fn validation_fails_for_zero_secs_between_tics() {
+        let mut cfg = default_susfile();
+        cfg.secs_between_tics = 0;
+
+        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        assert!(err
+            .to_string()
+            .contains("susfile.secs_between_tics must be > 0"));
     }
 }
