@@ -19,12 +19,14 @@ const STRATEGIST_AGENT_PROMPT: &str = include_str!("../prompts/strategist_agent.
 const ANALYST_AGENT_PROMPT: &str = include_str!("../prompts/analyst_agent.md");
 const REPORT_AGENT_PROMPT: &str = include_str!("../prompts/report_agent.md");
 const HEARTBEAT_PROMPT: &str = include_str!("../prompts/heartbeat.md");
-const HEARTBEAT_EKG: &str =
-    r"____/‾\____/\/\_____/‾‾\____/‾\____/\/\/\_____/‾‾\____________________";
 
 fn log_event(message: impl AsRef<str>) {
     let timestamp = Local::now().format("%d/%m/%y  %H:%M:%S");
     println!("[{timestamp}] [opensus] {}", message.as_ref());
+}
+
+fn heartbeat() {
+    log_event("tik<3");
 }
 
 fn heartbeat_capacity_status(ctx: &RuntimeCtx) -> String {
@@ -198,18 +200,6 @@ pub async fn handle_go(root: &Path, fullauto: bool) -> Result<()> {
     log_event("Starting opensus go");
     handle_init(root)?;
 
-    loop {
-        run_heartbeat(root).await?;
-        if !fullauto {
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_heartbeat(root: &Path) -> Result<()> {
-    println!("{HEARTBEAT_EKG}");
     let cfg = load_susfile(root)?;
     let api_key = std::env::var("OPENAI_API_KEY").context("missing OPENAI_API_KEY")?;
 
@@ -223,6 +213,21 @@ async fn run_heartbeat(root: &Path) -> Result<()> {
         handles: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
 
+    loop {
+        run_heartbeat(&ctx).await?;
+        if !fullauto {
+            wait_for_all_spawned_agents(&ctx).await;
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_heartbeat(ctx: &RuntimeCtx) -> Result<()> {
+    heartbeat();
+    reap_finished_agents(ctx).await;
+
     let analysts_at_limit =
         ctx.active_analysts.load(Ordering::SeqCst) >= ctx.cfg.max_agents_per_time;
     let strategists_at_limit =
@@ -234,9 +239,38 @@ async fn run_heartbeat(root: &Path) -> Result<()> {
     }
 
     log_event("Spawn dispatch_agent");
-    run_llm_agent(ctx.clone(), "dispatch_agent", None).await?;
+    run_llm_agent((*ctx).clone(), "dispatch_agent", None).await?;
 
-    // wait for spawned agents from this heartbeat
+    log_event("opensus go heartbeat complete");
+
+    Ok(())
+}
+
+async fn reap_finished_agents(ctx: &RuntimeCtx) {
+    let mut finished = Vec::new();
+    {
+        let mut handles = ctx.handles.lock().expect("handles mutex poisoned");
+        let mut pending = Vec::with_capacity(handles.len());
+        for handle in handles.drain(..) {
+            if handle.is_finished() {
+                finished.push(handle);
+            } else {
+                pending.push(handle);
+            }
+        }
+        *handles = pending;
+    }
+
+    for handle in finished {
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => log_event(format!("spawned agent error: {err}")),
+            Err(err) => log_event(format!("spawned task join error: {err}")),
+        }
+    }
+}
+
+async fn wait_for_all_spawned_agents(ctx: &RuntimeCtx) {
     let drained = {
         let mut handles = ctx.handles.lock().expect("handles mutex poisoned");
         std::mem::take(&mut *handles)
@@ -246,17 +280,13 @@ async fn run_heartbeat(root: &Path) -> Result<()> {
         log_event(format!("Waiting for {} spawned agent(s)", drained.len()));
     }
 
-    for h in drained {
-        match h.await {
+    for handle in drained {
+        match handle.await {
             Ok(Ok(())) => {}
             Ok(Err(err)) => log_event(format!("spawned agent error: {err}")),
             Err(err) => log_event(format!("spawned task join error: {err}")),
         }
     }
-
-    log_event("opensus go heartbeat complete");
-
-    Ok(())
 }
 
 async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<String>) -> Result<()> {
