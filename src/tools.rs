@@ -25,9 +25,11 @@ pub fn run_cli_tool(
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {
         bail!(
-            "configured CLI command `{}` failed: {}",
+            "configured CLI command `{}` failed (exit: {:?})\nstdout:\n{}\nstderr:\n{}",
             definition.name,
-            stderr.trim()
+            output.status.code(),
+            stdout,
+            stderr
         );
     }
 
@@ -66,4 +68,32 @@ fn find_unresolved_placeholder(command: &str) -> Option<String> {
         i += 1;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_failure_reports_stdout_and_stderr() {
+        let tool = CliToolConfig {
+            name: "failing_tool".to_string(),
+            description: "test".to_string(),
+            command: "bash -lc 'echo out; echo err >&2; exit 7'".to_string(),
+            args: vec![],
+        };
+
+        let err = run_cli_tool(&tool, &HashMap::new()).expect_err("tool should fail");
+        let rendered = err.to_string();
+
+        assert!(rendered.contains("exit: Some(7)"));
+        assert!(rendered.contains(
+            "stdout:
+out"
+        ));
+        assert!(rendered.contains(
+            "stderr:
+err"
+        ));
+    }
 }
