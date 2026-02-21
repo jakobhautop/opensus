@@ -304,6 +304,16 @@ pub fn default_susfile() -> Susfile {
                     }],
                 },
                 CliToolConfig {
+                    name: "sqlmap_scan".to_string(),
+                    description: "Run SQLMap against a target URL in non-interactive mode"
+                        .to_string(),
+                    command: "sqlmap -u <url> --batch".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "url".to_string(),
+                        description: "Target URL to test for SQL injection".to_string(),
+                    }],
+                },
+                CliToolConfig {
                     name: "fetch_robots_txt".to_string(),
                     description: "Fetch robots.txt from a target web service".to_string(),
                     command: "curl -fsSL <url>/robots.txt".to_string(),
@@ -398,6 +408,7 @@ mod tests {
         assert!(names.contains("gobuster_dir_with_wordlist"));
         assert!(names.contains("gobuster_vhost_with_wordlist"));
         assert!(names.contains("nikto_scan"));
+        assert!(names.contains("sqlmap_scan"));
         assert!(names.contains("fetch_robots_txt"));
         assert!(names.contains("path_traversal_probe"));
         assert!(names.contains("curl_raw"));
