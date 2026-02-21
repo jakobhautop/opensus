@@ -12,7 +12,10 @@ use anyhow::{bail, Context, Result};
 use chrono::Local;
 use reqwest::Client;
 use serde_json::{json, Value};
-use tokio::task::JoinHandle;
+use tokio::{
+    task::JoinHandle,
+    time::{sleep, Duration},
+};
 
 const DISPATCH_AGENT_PROMPT: &str = include_str!("../prompts/dispatch_agent.md");
 const STRATEGIST_AGENT_PROMPT: &str = include_str!("../prompts/strategist_agent.md");
@@ -219,6 +222,7 @@ pub async fn handle_go(root: &Path, fullauto: bool) -> Result<()> {
             wait_for_all_spawned_agents(&ctx).await;
             break;
         }
+        sleep(Duration::from_secs(ctx.cfg.secs_between_tics)).await;
     }
 
     Ok(())

@@ -39,6 +39,7 @@ Users do not edit runtime prompt files after build; `init` does not scaffold pro
 
 - `max_agents_per_time`: maximum concurrent analyst agents
 - `max_strategists_per_time`: maximum concurrent strategist agents (defaults to `1` when omitted)
+- `secs_between_tics`: seconds between heartbeat cycles when running `opensus go --fullauto` (defaults to `30` when omitted)
 
 ## Susfile CLI tools
 
