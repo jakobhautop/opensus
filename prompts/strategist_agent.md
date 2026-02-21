@@ -65,6 +65,15 @@ When reading notes and tool_data outputs (including `# Review Findings` in plan.
 
 Never duplicate identical entities.
 
+## Attack-Model Traceability (Required)
+
+Every material bullet/entry you add or update in `attack_model.md` must include the source task IDs that justify it.
+
+- Use explicit task references in-line, e.g. `evidence_tasks: [T0004, T0012]` or `source_tasks: [T0004]`.
+- If an entry is inferred from multiple findings, list all relevant `T####` IDs.
+- If confidence changes due to new evidence, update the same entry and expand its task list rather than duplicating entities.
+- Do not add high-impact claims (new vulnerability, exploitability change, foothold state change) without at least one cited `T####` source.
+
 ---
 
 # Example Merge Scenario
@@ -85,6 +94,7 @@ You must:
 
 - Not create S2.
 - Increase confidence of S1 to high.
+- Keep/update task traceability on S1, for example `evidence_tasks: [T0001, T0006]`.
 
 ---
 

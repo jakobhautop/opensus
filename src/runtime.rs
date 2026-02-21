@@ -351,7 +351,8 @@ async fn run_llm_agent(ctx: RuntimeCtx, agent_name: &str, task_hint: Option<Stri
                 }
             };
 
-            if agent_name == "analyst_agent" {
+            if agent_name == "analyst_agent" && should_capture_tool_output_for_notes(&ctx.cfg, name)
+            {
                 if let Some(task_id) = task_label.as_deref() {
                     if let Err(err) = append_tool_data(&ctx.root, task_id, name, &args, &content) {
                         log_event(format!("failed to write tool_data for {task_id}: {err}"));
@@ -897,17 +898,15 @@ args: {}
     ));
 
     fs::write(path, content).context("failed to write tool data")?;
-    let compact_output = output.replace('\n', " ");
-    let summary = compact_output.chars().take(160).collect::<String>();
-    let truncated = if compact_output.chars().count() > 160 {
-        format!("{summary}...")
+    let status = if output.trim_start().starts_with("tool error:") {
+        "error"
     } else {
-        summary
+        "ok"
     };
     append_review_finding(
         root,
         &format!(
-            "{task_id} | tool:{tool_name} | args={} | output={truncated}",
+            "{task_id} | tool:{tool_name} | status:{status} | args={}",
             args
         ),
     )?;
@@ -916,6 +915,14 @@ args: {}
     ));
 
     Ok(())
+}
+
+fn should_capture_tool_output_for_notes(cfg: &Susfile, tool_name: &str) -> bool {
+    if cfg.tools.cli.iter().any(|tool| tool.name == tool_name) {
+        return true;
+    }
+
+    matches!(tool_name, "cve_search" | "cve_show")
 }
 
 fn read_tool_data(root: &Path) -> Result<String> {
@@ -977,6 +984,46 @@ fn write_if_missing(path: &Path, content: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_findings_for_tool_calls_are_compact() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        write_plan(
+            tmp.path(),
+            "# Plan
+",
+        )
+        .expect("plan");
+        fs::create_dir_all(tmp.path().join("tool_data")).expect("tool_data");
+
+        append_tool_data(
+            tmp.path(),
+            "T0002",
+            "nikto_scan",
+            &json!({"url": "http://89.167.60.165"}),
+            "tool error: configured CLI command `nikto_scan` failed",
+        )
+        .expect("append tool data");
+
+        let plan = read_plan(tmp.path()).expect("read plan");
+        assert!(plan.contains(
+            r#"T0002 | tool:nikto_scan | status:error | args={"url":"http://89.167.60.165"}"#
+        ));
+        assert!(!plan.contains("output="));
+    }
+
+    #[test]
+    fn capture_tool_output_only_for_scanner_tools() {
+        let cfg = default_susfile();
+
+        assert!(should_capture_tool_output_for_notes(&cfg, "nikto_scan"));
+        assert!(should_capture_tool_output_for_notes(&cfg, "cve_search"));
+        assert!(!should_capture_tool_output_for_notes(
+            &cfg,
+            "read_attack_plan"
+        ));
+        assert!(!should_capture_tool_output_for_notes(&cfg, "add_note"));
+    }
 
     #[test]
     fn strategist_spawn_respects_capacity_limit() {
