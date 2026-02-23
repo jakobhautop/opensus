@@ -228,6 +228,40 @@ pub fn default_susfile() -> Susfile {
         tools: ToolsConfig {
             cli: vec![
                 CliToolConfig {
+                    name: "metasploit_search".to_string(),
+                    description:
+                        "Search Metasploit modules by keyword in non-interactive mode"
+                            .to_string(),
+                    command: "msfconsole -q -x \"search <query>; exit -y\"".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "query".to_string(),
+                        description: "Search string (for example apache 2.4.49)".to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "metasploit_check".to_string(),
+                    description:
+                        "Run Metasploit check action for a module against a target host"
+                            .to_string(),
+                    command: "msfconsole -q -x \"use <module>; set RHOSTS <rhosts>; set RPORT <rport>; check; exit -y\"".to_string(),
+                    args: vec![
+                        CliArgConfig {
+                            name: "module".to_string(),
+                            description:
+                                "Metasploit module path (for example exploit/linux/http/apache_mod_cgi_bash_env_exec)"
+                                    .to_string(),
+                        },
+                        CliArgConfig {
+                            name: "rhosts".to_string(),
+                            description: "Target host/IP for check action".to_string(),
+                        },
+                        CliArgConfig {
+                            name: "rport".to_string(),
+                            description: "Target port for check action".to_string(),
+                        },
+                    ],
+                },
+                CliToolConfig {
                     name: "nmap_targeted_scan".to_string(),
                     description: "Run an nmap aggressive scan against a target host".to_string(),
                     command: "nmap -A <target>".to_string(),
@@ -417,6 +451,8 @@ mod tests {
         assert!(names.contains("gobuster_vhost"));
         assert!(names.contains("gobuster_dir_with_wordlist"));
         assert!(names.contains("gobuster_vhost_with_wordlist"));
+        assert!(names.contains("metasploit_search"));
+        assert!(names.contains("metasploit_check"));
         assert!(names.contains("nikto_scan"));
         assert!(names.contains("sqlmap_scan"));
         assert!(names.contains("fetch_robots_txt"));
@@ -493,7 +529,13 @@ mod tests {
     #[test]
     fn validation_fails_when_placeholder_has_no_arg_mapping() {
         let mut cfg = default_susfile();
-        cfg.tools.cli[0].command = "nmap -A <target> <extra>".to_string();
+        let tool = cfg
+            .tools
+            .cli
+            .iter_mut()
+            .find(|tool| tool.name == "nmap_targeted_scan")
+            .expect("default config should include nmap_targeted_scan");
+        tool.command = "nmap -A <target> <extra>".to_string();
         let err = validate_susfile(&cfg).expect_err("expected validation error");
         assert!(err.to_string().contains("<extra>"));
     }
