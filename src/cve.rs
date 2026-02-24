@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Cursor,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -73,7 +73,23 @@ pub fn ensure_local_db() -> Result<PathBuf> {
 }
 
 pub async fn install_local_database_from_releases() -> Result<PathBuf> {
-    let tmp = tempfile::tempdir().context("failed to create temporary directory")?;
+    let target = local_db_path()?;
+    let target_parent = target
+        .parent()
+        .context("failed to resolve CVE database parent directory")?;
+    fs::create_dir_all(target_parent)
+        .with_context(|| format!("failed to create {}", target_parent.display()))?;
+
+    let tmp = tempfile::Builder::new()
+        .prefix("opensus-cvedb-")
+        .tempdir_in(target_parent)
+        .with_context(|| {
+            format!(
+                "failed to create temporary directory in {}",
+                target_parent.display()
+            )
+        })?;
+
     let zip_path = tmp.path().join("cvelistV5-latest.zip");
     let extracted_path = tmp.path().join("cvelistV5");
     let db_path = tmp.path().join("cve.db");
@@ -81,13 +97,6 @@ pub async fn install_local_database_from_releases() -> Result<PathBuf> {
     download_latest_release_zip(&zip_path).await?;
     extract_zip_archive(&zip_path, &extracted_path)?;
     build_sqlite_from_repo(&extracted_path, &db_path)?;
-
-    let target = local_db_path()?;
-    let target_parent = target
-        .parent()
-        .context("failed to resolve CVE database parent directory")?;
-    fs::create_dir_all(target_parent)
-        .with_context(|| format!("failed to create {}", target_parent.display()))?;
 
     fs::copy(&db_path, &target)
         .with_context(|| format!("failed to replace {}", target.display()))?;
@@ -303,19 +312,27 @@ async fn download_latest_release_zip(output_path: &Path) -> Result<()> {
     let asset = select_release_asset(&release.assets)
         .context("failed to locate release zip asset for full cvelistV5 data")?;
 
-    let zip_bytes = client
+    let mut response = client
         .get(&asset.browser_download_url)
         .send()
         .await
         .with_context(|| format!("failed to download release asset {}", asset.name))?
         .error_for_status()
-        .with_context(|| format!("release asset request failed for {}", asset.name))?
-        .bytes()
-        .await
-        .with_context(|| format!("failed to read release asset bytes for {}", asset.name))?;
+        .with_context(|| format!("release asset request failed for {}", asset.name))?;
 
-    fs::write(output_path, zip_bytes)
-        .with_context(|| format!("failed to write {}", output_path.display()))?;
+    let mut output = fs::File::create(output_path)
+        .with_context(|| format!("failed to create {}", output_path.display()))?;
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .with_context(|| format!("failed to read release asset bytes for {}", asset.name))?
+    {
+        output
+            .write_all(&chunk)
+            .with_context(|| format!("failed to write {}", output_path.display()))?;
+    }
+
     Ok(())
 }
 
@@ -338,10 +355,9 @@ fn select_release_asset(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
 fn extract_zip_archive(zip_path: &Path, out_dir: &Path) -> Result<()> {
     fs::create_dir_all(out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
-    let zip_data =
-        fs::read(zip_path).with_context(|| format!("failed to read {}", zip_path.display()))?;
-    let reader = Cursor::new(zip_data);
-    let mut archive = ZipArchive::new(reader).context("failed to open zip archive")?;
+    let zip_file = fs::File::open(zip_path)
+        .with_context(|| format!("failed to open {}", zip_path.display()))?;
+    let mut archive = ZipArchive::new(zip_file).context("failed to open zip archive")?;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).context("failed to read zip entry")?;
