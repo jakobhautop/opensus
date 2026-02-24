@@ -24,6 +24,20 @@ These are designed for evidence-first module discovery and vulnerability validat
 - `opensus cve show <CVE-ID>`
 - `opensus cvedb install`
 
+## Linux x64 binary install
+
+Use the technical bootstrap installer below to download and link the latest Linux x64 release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jakobhautop/opensus/main/scripts/opensus-linux-x64-bootstrap.sh | bash
+```
+
+Or run it locally after cloning this repo:
+
+```bash
+bash scripts/opensus-linux-x64-bootstrap.sh
+```
+
 ## Prompt files
 
 Prompts are compiled into the binary from:
