@@ -239,25 +239,25 @@ pub fn default_susfile() -> Susfile {
                     }],
                 },
                 CliToolConfig {
-                    name: "metasploit_check".to_string(),
+                    name: "metasploit_exploit".to_string(),
                     description:
-                        "Run Metasploit check action for a module against a target host"
+                        "Run a Metasploit exploit module against a target host in non-interactive mode"
                             .to_string(),
-                    command: "msfconsole -q -x \"use <module>; set RHOSTS <rhosts>; set RPORT <rport>; check; exit -y\"".to_string(),
+                    command: "msfconsole -q -x \"use <module>; set RHOSTS <rhosts>; set RPORT <rport>; exploit -z; exit -y\"".to_string(),
                     args: vec![
                         CliArgConfig {
                             name: "module".to_string(),
                             description:
-                                "Metasploit module path (for example exploit/linux/http/apache_mod_cgi_bash_env_exec)"
+                                "Metasploit exploit module path (for example exploit/linux/http/apache_mod_cgi_bash_env_exec)"
                                     .to_string(),
                         },
                         CliArgConfig {
                             name: "rhosts".to_string(),
-                            description: "Target host/IP for check action".to_string(),
+                            description: "Target host/IP for exploit action".to_string(),
                         },
                         CliArgConfig {
                             name: "rport".to_string(),
-                            description: "Target port for check action".to_string(),
+                            description: "Target port for exploit action".to_string(),
                         },
                     ],
                 },
@@ -334,6 +334,52 @@ pub fn default_susfile() -> Susfile {
                         CliArgConfig {
                             name: "wordlist".to_string(),
                             description: "Path to wordlist file for vhost discovery".to_string(),
+                        },
+                    ],
+                },
+                CliToolConfig {
+                    name: "ffuf_dir".to_string(),
+                    description: "Run ffuf directory/content discovery with Kali default wordlist"
+                        .to_string(),
+                    command: "ffuf -u <url>/FUZZ -w /usr/share/wordlists/dirb/common.txt -fc 404"
+                        .to_string(),
+                    args: vec![CliArgConfig {
+                        name: "url".to_string(),
+                        description: "Target base URL without trailing slash (for example http://127.0.0.1)".to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "nuclei_scan".to_string(),
+                    description: "Run nuclei web vulnerability templates against a target URL"
+                        .to_string(),
+                    command: "nuclei -u <url> -severity low,medium,high,critical".to_string(),
+                    args: vec![CliArgConfig {
+                        name: "url".to_string(),
+                        description: "Target URL or host accepted by nuclei".to_string(),
+                    }],
+                },
+                CliToolConfig {
+                    name: "hydra_http_post_form".to_string(),
+                    description: "Run hydra HTTP POST form brute-force check with provided form spec"
+                        .to_string(),
+                    command: "hydra -L <userlist> -P <passlist> <target> http-post-form <form_spec>"
+                        .to_string(),
+                    args: vec![
+                        CliArgConfig {
+                            name: "target".to_string(),
+                            description: "Target hostname or IP for hydra".to_string(),
+                        },
+                        CliArgConfig {
+                            name: "userlist".to_string(),
+                            description: "Path to username list file".to_string(),
+                        },
+                        CliArgConfig {
+                            name: "passlist".to_string(),
+                            description: "Path to password list file".to_string(),
+                        },
+                        CliArgConfig {
+                            name: "form_spec".to_string(),
+                            description: "Hydra form spec (for example '/login.php:user=^USER^&pass=^PASS^:F=Invalid')".to_string(),
                         },
                     ],
                 },
@@ -452,7 +498,7 @@ mod tests {
         assert!(names.contains("gobuster_dir_with_wordlist"));
         assert!(names.contains("gobuster_vhost_with_wordlist"));
         assert!(names.contains("metasploit_search"));
-        assert!(names.contains("metasploit_check"));
+        assert!(names.contains("metasploit_exploit"));
         assert!(names.contains("nikto_scan"));
         assert!(names.contains("sqlmap_scan"));
         assert!(names.contains("fetch_robots_txt"));
@@ -461,6 +507,9 @@ mod tests {
         assert!(names.contains("vmdk_strings"));
         assert!(names.contains("vmdk_binwalk"));
         assert!(names.contains("list_wordlists"));
+        assert!(names.contains("hydra_http_post_form"));
+        assert!(names.contains("nuclei_scan"));
+        assert!(names.contains("ffuf_dir"));
     }
 
     #[test]
