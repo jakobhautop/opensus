@@ -23,6 +23,7 @@ pub fn tools_for_agent(agent: &str, cfg: &Susfile, cve_tools_enabled: bool) -> V
                 ),
                 tool_update_attack_model(),
                 tool_update_plan(),
+                tool_update_summary(),
                 tool_request_tooling(),
             ];
             if cve_tools_enabled {
@@ -111,6 +112,10 @@ fn tool_update_attack_model() -> Value {
 
 fn tool_request_tooling() -> Value {
     json!({"type":"function","function":{"name":"request_tooling","description":"Append a CLI tooling request to the # Tool Request section of plan.md","parameters":{"type":"object","properties":{"request":{"type":"string","description":"Precise CLI command(s) and tooling capability needed"}},"required":["request"]}}})
+}
+
+fn tool_update_summary() -> Value {
+    json!({"type":"function","function":{"name":"update_summary","description":"Append summary bullets to summary.md","parameters":{"type":"object","properties":{"text":{"type":"string","description":"One or more markdown bullet lines to append under # Summary"}},"required":["text"]}}})
 }
 
 fn tool_write_report() -> Value {

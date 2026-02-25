@@ -170,6 +170,8 @@ pub fn handle_init(root: &Path) -> Result<()> {
     log_event("Ensured brief.md exists");
     write_if_missing(&root.join("attack_model.md"), "")?;
     log_event("Ensured attack_model.md exists");
+    write_if_missing(&root.join("summary.md"), "# Summary\n\n")?;
+    log_event("Ensured summary.md exists");
 
     Ok(())
 }
@@ -399,6 +401,14 @@ fn execute_tool_call(
                 .context("update_plan requires updated_markdown")?;
             write_plan(&ctx.root, markdown)?;
             log_event("Plan updated".to_string());
+            Ok("ok".to_string())
+        }
+        "update_summary" => {
+            let text = args["text"]
+                .as_str()
+                .context("update_summary requires text")?;
+            update_summary(&ctx.root, text)?;
+            log_event("Summary updated".to_string());
             Ok("ok".to_string())
         }
         "read_note" => {
@@ -978,6 +988,48 @@ fn write_report(root: &Path, markdown: &str) -> Result<()> {
     Ok(())
 }
 
+fn update_summary(root: &Path, text: &str) -> Result<()> {
+    let path = root.join("summary.md");
+    let mut content = if path.exists() {
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?
+    } else {
+        "# Summary\n\n".to_string()
+    };
+
+    if !content.contains("# Summary") {
+        if !content.trim().is_empty() {
+            content.push_str("\n\n");
+        }
+        content.push_str("# Summary\n\n");
+    }
+
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+
+    let normalized = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            if line.starts_with("- ") {
+                line.to_string()
+            } else {
+                format!("- {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if !normalized.is_empty() {
+        content.push_str(&normalized);
+        content.push('\n');
+    }
+
+    fs::write(&path, content).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
 fn write_if_missing(path: &Path, content: &str) -> Result<()> {
     if !path.exists() {
         fs::write(path, content).with_context(|| format!("failed writing {}", path.display()))?;
@@ -1215,6 +1267,31 @@ mod tests {
 
         assert!(rendered.contains("Max number of analysts are running! Do NOT spawn new analyst."));
         assert!(!rendered.contains("{{CAPACITY_STATUS}}"));
+    }
+
+    #[test]
+    fn update_summary_appends_bullets_and_normalizes_lines() {
+        let tmp = tempfile::tempdir().expect("tmp");
+
+        update_summary(tmp.path(), "I read the brief\n- I created T0001").expect("summary");
+
+        let summary = fs::read_to_string(tmp.path().join("summary.md")).expect("read summary");
+        assert!(summary.starts_with("# Summary"));
+        assert!(summary.contains("- I read the brief"));
+        assert!(summary.contains("- I created T0001"));
+    }
+
+    #[test]
+    fn init_creates_summary_file() {
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "test-key");
+        }
+
+        let tmp = tempfile::tempdir().expect("tmp");
+        handle_init(tmp.path()).expect("init");
+
+        let summary = fs::read_to_string(tmp.path().join("summary.md")).expect("summary");
+        assert_eq!(summary, "# Summary\n\n");
     }
 
     #[test]

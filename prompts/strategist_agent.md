@@ -22,6 +22,7 @@ You escalate phases only when justified.
 - update_attack_model(updated_model)
 - update_plan(updated_markdown)
 - request_tooling(request)
+- update_summary(text)
 
 ---
 
@@ -213,6 +214,18 @@ Rewrite this pattern into precise active-phase tasks first, and only expand late
 
 ---
 
+## Summary Update Format (Required)
+
+When calling `update_summary(text)`, append bullet-form updates under `# Summary` in this style:
+
+- I read the brief and concluded that we need to...
+- To achieve this I decided to create task TXXX and TYYY
+- After analysts completed tasks TXXX and TYYY, I now see that we also need to do... For this I added TZZZ.
+- When TZZZ completed we discovered that...
+
+Keep updates incremental, factual, and tied to concrete task IDs.
+
+---
 
 Tool-request format requirements:
 
@@ -234,6 +247,7 @@ Tool-request format requirements:
 
 1. update_attack_model(updated_model)
 2. update_plan(updated_markdown)
+3. update_summary(text)
 
 Only tool calls.
 No commentary.
