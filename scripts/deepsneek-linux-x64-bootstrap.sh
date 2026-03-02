@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="jakobhautop/opensus"
+REPO="jakobhautop/deepsneek"
 ARCH="x86_64-unknown-linux-gnu"
-INSTALL_DIR="${HOME}/.local/opensus"
-BIN_LINK="/usr/local/bin/opensus"
+INSTALL_DIR="${HOME}/.local/deepsneek"
+BIN_LINK="/usr/local/bin/deepsneek"
 
 printf 'Detecting latest release for %s...\n' "$ARCH"
 
@@ -23,15 +23,15 @@ printf 'Downloading %s\n' "$URL"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-rm -f opensus.tar.gz opensus
-curl -L -o opensus.tar.gz "$URL"
+rm -f deepsneek.tar.gz deepsneek
+curl -L -o deepsneek.tar.gz "$URL"
 
 echo "Extracting..."
-tar -xzf opensus.tar.gz
-chmod +x opensus
+tar -xzf deepsneek.tar.gz
+chmod +x deepsneek
 
 echo "Linking to ${BIN_LINK}"
-sudo ln -sf "$INSTALL_DIR/opensus" "$BIN_LINK"
+sudo ln -sf "$INSTALL_DIR/deepsneek" "$BIN_LINK"
 
 echo "Done. You can now run:"
-echo "  opensus"
+echo "  deepsneek"

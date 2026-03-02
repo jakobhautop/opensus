@@ -25,7 +25,7 @@ const HEARTBEAT_PROMPT: &str = include_str!("../prompts/heartbeat.md");
 
 fn log_event(message: impl AsRef<str>) {
     let timestamp = Local::now().format("%d/%m/%y  %H:%M:%S");
-    println!("[{timestamp}] [opensus] {}", message.as_ref());
+    println!("[{timestamp}] [deepsneek] {}", message.as_ref());
 }
 
 fn heartbeat() {
@@ -75,7 +75,7 @@ fn embedded_prompt(agent_name: &str) -> Result<&'static str> {
     }
 }
 
-fn role_custom_prompt_path(cfg: &Susfile, agent_name: &str) -> Option<String> {
+fn role_custom_prompt_path(cfg: &Sneekfile, agent_name: &str) -> Option<String> {
     let agents = cfg.agents.as_ref()?;
     match agent_name {
         "analyst_agent" => agents.analyst.as_ref().map(|c| c.prompt.clone()),
@@ -86,7 +86,7 @@ fn role_custom_prompt_path(cfg: &Susfile, agent_name: &str) -> Option<String> {
 }
 
 fn render_agent_prompt(
-    cfg: &Susfile,
+    cfg: &Sneekfile,
     root: &Path,
     agent_name: &str,
     capacity_status: &str,
@@ -104,7 +104,7 @@ fn render_agent_prompt(
         String::new()
     };
 
-    let susfile_json = serde_json::to_string_pretty(cfg).context("failed to render susfile")?;
+    let sneekfile_json = serde_json::to_string_pretty(cfg).context("failed to render sneekfile")?;
 
     Ok(base
         .replace("{{USER_INPUT}}", &custom_prompt)
@@ -112,12 +112,12 @@ fn render_agent_prompt(
             "{{HEARTBEAT_MESSAGE}}",
             &HEARTBEAT_PROMPT.replace("{{CAPACITY_STATUS}}", capacity_status),
         )
-        .replace("{{SUSFILE}}", &susfile_json))
+        .replace("{{SNEEKFILE}}", &sneekfile_json))
 }
 
 use crate::{
     chat::{create_chat_completion, tools_for_agent},
-    config::{default_susfile, load_susfile, Susfile},
+    config::{default_sneekfile, load_sneekfile, Sneekfile},
     cve,
     plan::{
         append_review_finding, append_tool_request, mark_review_findings_read, parse_tasks,
@@ -129,7 +129,7 @@ use crate::{
 #[derive(Clone)]
 struct RuntimeCtx {
     root: Arc<PathBuf>,
-    cfg: Susfile,
+    cfg: Sneekfile,
     api_key: Arc<String>,
     client: Client,
     active_analysts: Arc<AtomicUsize>,
@@ -138,21 +138,21 @@ struct RuntimeCtx {
 }
 
 pub fn handle_init(root: &Path) -> Result<()> {
-    log_event("Starting opensus init");
-    let cfg = default_susfile();
+    log_event("Starting deepsneek init");
+    let cfg = default_sneekfile();
     write_if_missing(
-        &root.join("susfile"),
+        &root.join("sneekfile"),
         &(serde_json::to_string_pretty(&cfg)? + "\n"),
     )?;
 
-    let loaded = load_susfile(root)?;
+    let loaded = load_sneekfile(root)?;
     if loaded.api.eq_ignore_ascii_case("openai") && std::env::var("OPENAI_API_KEY").is_err() {
-        bail!("OPENAI_API_KEY is required when susfile.api=openai");
+        bail!("OPENAI_API_KEY is required when sneekfile.api=openai");
     }
 
     if let Err(err) = cve::ensure_local_db() {
         log_event(format!(
-            "CVE database not installed yet ({}). Run `opensus cvedb install` to enable CVE search.",
+            "CVE database not installed yet ({}). Run `deepsneek cvedb install` to enable CVE search.",
             err
         ));
     }
@@ -177,7 +177,7 @@ pub fn handle_init(root: &Path) -> Result<()> {
 }
 
 pub fn handle_reset(root: &Path) -> Result<()> {
-    log_event("Starting opensus reset");
+    log_event("Starting deepsneek reset");
     handle_init(root)?;
 
     let notes_path = root.join("notes");
@@ -202,10 +202,10 @@ pub fn handle_reset(root: &Path) -> Result<()> {
 }
 
 pub async fn handle_go(root: &Path, fullauto: bool) -> Result<()> {
-    log_event("Starting opensus go");
+    log_event("Starting deepsneek go");
     handle_init(root)?;
 
-    let cfg = load_susfile(root)?;
+    let cfg = load_sneekfile(root)?;
     let api_key = std::env::var("OPENAI_API_KEY").context("missing OPENAI_API_KEY")?;
 
     let ctx = RuntimeCtx {
@@ -247,7 +247,7 @@ async fn run_heartbeat(ctx: &RuntimeCtx) -> Result<()> {
     log_event("Spawn dispatch_agent");
     run_llm_agent((*ctx).clone(), "dispatch_agent", None).await?;
 
-    log_event("opensus go heartbeat complete");
+    log_event("deepsneek go heartbeat complete");
 
     Ok(())
 }
@@ -507,7 +507,7 @@ fn execute_tool_call(
     }
 }
 
-fn enforce_allowed_ips(cfg: &Susfile, tool_name: &str, args: &Value) -> Result<()> {
+fn enforce_allowed_ips(cfg: &Sneekfile, tool_name: &str, args: &Value) -> Result<()> {
     let allowed_hosts: HashSet<String> = cfg
         .allowed_hosts
         .iter()
@@ -552,7 +552,7 @@ fn enforce_allowed_ips(cfg: &Susfile, tool_name: &str, args: &Value) -> Result<(
         blocked_hosts.dedup();
         if !blocked_hosts.is_empty() {
             bail!(
-                "tool call `{tool_name}` blocked: hostname(s) [{}] are not allowed. Use entries from susfile.allowed_hosts",
+                "tool call `{tool_name}` blocked: hostname(s) [{}] are not allowed. Use entries from sneekfile.allowed_hosts",
                 blocked_hosts.join(", ")
             );
         }
@@ -566,7 +566,7 @@ fn enforce_allowed_ips(cfg: &Susfile, tool_name: &str, args: &Value) -> Result<(
     }
 
     bail!(
-        "tool call `{tool_name}` blocked: disallowed IP(s) [{}]. Allowed hosts come from susfile.allowed_hosts",
+        "tool call `{tool_name}` blocked: disallowed IP(s) [{}]. Allowed hosts come from sneekfile.allowed_hosts",
         disallowed.join(", ")
     );
 }
@@ -754,7 +754,7 @@ fn spawn_agent(
 }
 
 fn build_system_prompt(
-    cfg: &Susfile,
+    cfg: &Sneekfile,
     root: &Path,
     agent_name: &str,
     task_hint: Option<&str>,
@@ -787,7 +787,7 @@ fn build_system_prompt(
         .replace("{{ENVIRONMENT_TOOLS}}", ""))
 }
 
-fn execute_configured_cli_tool(cfg: &Susfile, name: &str, args: &Value) -> Result<String> {
+fn execute_configured_cli_tool(cfg: &Sneekfile, name: &str, args: &Value) -> Result<String> {
     let cli_tool = cfg
         .tools
         .cli
@@ -931,7 +931,7 @@ args: {}
     Ok(())
 }
 
-fn should_capture_tool_output_for_notes(cfg: &Susfile, tool_name: &str) -> bool {
+fn should_capture_tool_output_for_notes(cfg: &Sneekfile, tool_name: &str) -> bool {
     if cfg.tools.cli.iter().any(|tool| tool.name == tool_name) {
         return true;
     }
@@ -1070,7 +1070,7 @@ mod tests {
 
     #[test]
     fn capture_tool_output_only_for_scanner_tools() {
-        let cfg = default_susfile();
+        let cfg = default_sneekfile();
 
         assert!(should_capture_tool_output_for_notes(&cfg, "nikto_scan"));
         assert!(should_capture_tool_output_for_notes(&cfg, "cve_search"));
@@ -1083,7 +1083,7 @@ mod tests {
 
     #[test]
     fn strategist_spawn_respects_capacity_limit() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.max_strategists_per_time = 1;
 
         let ctx = RuntimeCtx {
@@ -1119,7 +1119,7 @@ mod tests {
     }
     #[test]
     fn blocks_tool_calls_with_disallowed_ip_arguments() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.allowed_hosts = vec!["89.167.60.165".to_string()];
 
         let err = enforce_allowed_ips(
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn allows_tool_calls_when_all_ips_are_approved() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.allowed_hosts = vec!["89.167.60.165".to_string()];
 
         enforce_allowed_ips(
@@ -1149,7 +1149,7 @@ mod tests {
 
     #[test]
     fn blocks_tool_calls_with_hostname_urls() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.allowed_hosts = vec!["89.167.60.165".to_string()];
 
         let err = enforce_allowed_ips(&cfg, "curl_raw", &json!({"args": "-i http://example.com/"}))
@@ -1161,7 +1161,7 @@ mod tests {
 
     #[test]
     fn allows_tool_calls_with_allowed_hostname_url() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.allowed_hosts = vec!["example.com".to_string()];
 
         enforce_allowed_ips(
@@ -1174,7 +1174,7 @@ mod tests {
 
     #[test]
     fn allows_tool_calls_with_localhost_when_loopback_allowed() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.allowed_hosts = vec!["127.0.0.1".to_string()];
 
         enforce_allowed_ips(
@@ -1186,7 +1186,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_keeps_brief_and_susfile_and_clears_runtime_artifacts() {
+    fn reset_keeps_brief_and_sneekfile_and_clears_runtime_artifacts() {
         unsafe {
             std::env::set_var("OPENAI_API_KEY", "test-key");
         }
@@ -1212,7 +1212,7 @@ mod tests {
             fs::read_to_string(tmp.path().join("brief.md")).expect("read brief"),
             "custom brief"
         );
-        assert!(tmp.path().join("susfile").exists());
+        assert!(tmp.path().join("sneekfile").exists());
         assert_eq!(
             fs::read_to_string(tmp.path().join("plan.md")).expect("read plan"),
             ""
@@ -1231,7 +1231,7 @@ mod tests {
 
     #[test]
     fn heartbeat_capacity_status_reports_limits() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.max_agents_per_time = 1;
         cfg.max_strategists_per_time = 1;
 
@@ -1254,7 +1254,7 @@ mod tests {
     #[test]
     fn build_system_prompt_injects_capacity_status_into_heartbeat_message() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let cfg = default_susfile();
+        let cfg = default_sneekfile();
 
         let rendered = build_system_prompt(
             &cfg,
@@ -1303,7 +1303,7 @@ mod tests {
         )
         .expect("prompt");
 
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.agents = Some(crate::config::AgentsConfig {
             analyst: None,
             strategist: None,

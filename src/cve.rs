@@ -67,7 +67,7 @@ pub fn ensure_local_db() -> Result<PathBuf> {
     }
 
     bail!(
-        "CVE database does not exist at {}. Run `opensus cvedb install` first.",
+        "CVE database does not exist at {}. Run `deepsneek cvedb install` first.",
         db_path.display()
     )
 }
@@ -81,7 +81,7 @@ pub async fn install_local_database_from_releases() -> Result<PathBuf> {
         .with_context(|| format!("failed to create {}", target_parent.display()))?;
 
     let tmp = tempfile::Builder::new()
-        .prefix("opensus-cvedb-")
+        .prefix("deepsneek-cvedb-")
         .tempdir_in(target_parent)
         .with_context(|| {
             format!(
@@ -107,7 +107,7 @@ pub fn search_local_db(query: &str) -> Result<Vec<CveRow>> {
     let db_path = local_db_path()?;
     if !db_path.exists() {
         bail!(
-            "CVE database does not exist at {}. Run `opensus cvedb install` first.",
+            "CVE database does not exist at {}. Run `deepsneek cvedb install` first.",
             db_path.display()
         );
     }
@@ -150,7 +150,7 @@ pub fn show_local_db(id: &str) -> Result<CveShowRow> {
     let db_path = local_db_path()?;
     if !db_path.exists() {
         bail!(
-            "CVE database does not exist at {}. Run `opensus cvedb install` first.",
+            "CVE database does not exist at {}. Run `deepsneek cvedb install` first.",
             db_path.display()
         );
     }
@@ -286,7 +286,7 @@ async fn download_latest_release_zip(output_path: &Path) -> Result<()> {
     let mut headers = HeaderMap::new();
     headers.insert(
         USER_AGENT,
-        HeaderValue::from_static("opensus-cvedb-installer"),
+        HeaderValue::from_static("deepsneek-cvedb-installer"),
     );
     headers.insert(
         ACCEPT,
@@ -394,7 +394,7 @@ fn open_readonly_connection(db_path: &Path) -> Result<Connection> {
 
 fn local_db_path() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME environment variable is required")?;
-    Ok(PathBuf::from(home).join(".opensus").join("cve.db"))
+    Ok(PathBuf::from(home).join(".deepsneek").join("cve.db"))
 }
 
 fn parse_cve_json(raw: &str) -> Result<Option<ParsedCve>> {

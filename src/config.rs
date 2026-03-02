@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Susfile {
+pub struct Sneekfile {
     pub api: String,
     pub model: String,
     #[serde(default = "default_secs_between_tics")]
@@ -61,34 +61,34 @@ fn default_secs_between_tics() -> u64 {
     30
 }
 
-pub fn load_susfile(root: &Path) -> Result<Susfile> {
-    let content = fs::read_to_string(root.join("susfile")).context("failed to read susfile")?;
-    let cfg: Susfile = serde_json::from_str(&content).context("susfile must be valid JSON")?;
-    validate_susfile(&cfg)?;
+pub fn load_sneekfile(root: &Path) -> Result<Sneekfile> {
+    let content = fs::read_to_string(root.join("sneekfile")).context("failed to read sneekfile")?;
+    let cfg: Sneekfile = serde_json::from_str(&content).context("sneekfile must be valid JSON")?;
+    validate_sneekfile(&cfg)?;
     Ok(cfg)
 }
 
-pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
+pub fn validate_sneekfile(cfg: &Sneekfile) -> Result<()> {
     if cfg.api.to_lowercase() != "openai" {
         bail!("unsupported api `{}`; only `openai` is supported", cfg.api);
     }
     if cfg.model.trim().is_empty() {
-        bail!("susfile.model must not be empty");
+        bail!("sneekfile.model must not be empty");
     }
     if cfg.max_agents_per_time == 0 {
-        bail!("susfile.max_agents_per_time must be > 0");
+        bail!("sneekfile.max_agents_per_time must be > 0");
     }
     if cfg.secs_between_tics == 0 {
-        bail!("susfile.secs_between_tics must be > 0");
+        bail!("sneekfile.secs_between_tics must be > 0");
     }
     if cfg.max_strategists_per_time == 0 {
-        bail!("susfile.max_strategists_per_time must be > 0");
+        bail!("sneekfile.max_strategists_per_time must be > 0");
     }
 
     for host in &cfg.allowed_hosts {
         let candidate = host.trim();
         if candidate.is_empty() {
-            bail!("susfile.allowed_hosts entries must not be empty");
+            bail!("sneekfile.allowed_hosts entries must not be empty");
         }
 
         let is_ipv4 = candidate.parse::<std::net::Ipv4Addr>().is_ok();
@@ -100,12 +100,12 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
 
         if !(is_ipv4 || is_localhost || is_hostname) {
             bail!(
-                "susfile.allowed_hosts contains invalid host `{candidate}` (expected IPv4, localhost, or hostname)"
+                "sneekfile.allowed_hosts contains invalid host `{candidate}` (expected IPv4, localhost, or hostname)"
             );
         }
     }
     if cfg.tools.cli.is_empty() {
-        bail!("susfile.tools.cli must include at least one CLI tool definition");
+        bail!("sneekfile.tools.cli must include at least one CLI tool definition");
     }
 
     let mut seen_tool_names = std::collections::HashSet::new();
@@ -136,7 +136,7 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
         ] {
             if let Some(prompt_cfg) = prompt_cfg {
                 if prompt_cfg.prompt.trim().is_empty() {
-                    bail!("susfile.agents.{role}.prompt must not be empty");
+                    bail!("sneekfile.agents.{role}.prompt must not be empty");
                 }
             }
         }
@@ -144,22 +144,22 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
     for tool in &cfg.tools.cli {
         let tool_name = tool.name.trim();
         if tool_name.is_empty() {
-            bail!("each susfile.tools.cli definition requires a non-empty name");
+            bail!("each sneekfile.tools.cli definition requires a non-empty name");
         }
         if reserved_tool_names.contains(&tool_name) {
             bail!(
-                "susfile.tools.cli name `{tool_name}` collides with a reserved runtime tool name"
+                "sneekfile.tools.cli name `{tool_name}` collides with a reserved runtime tool name"
             );
         }
         if !seen_tool_names.insert(tool_name.to_string()) {
-            bail!("duplicate susfile.tools.cli name `{tool_name}`");
+            bail!("duplicate sneekfile.tools.cli name `{tool_name}`");
         }
 
         if tool.description.trim().is_empty() {
-            bail!("susfile.tools.cli `{tool_name}` requires a non-empty description");
+            bail!("sneekfile.tools.cli `{tool_name}` requires a non-empty description");
         }
         if tool.command.trim().is_empty() {
-            bail!("susfile.tools.cli `{tool_name}` requires a non-empty command");
+            bail!("sneekfile.tools.cli `{tool_name}` requires a non-empty command");
         }
 
         let placeholders = extract_placeholders(&tool.command);
@@ -167,19 +167,19 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
         for arg in &tool.args {
             let arg_name = arg.name.trim();
             if arg_name.is_empty() {
-                bail!("susfile.tools.cli `{tool_name}` has an argument with empty name");
+                bail!("sneekfile.tools.cli `{tool_name}` has an argument with empty name");
             }
             if !seen_args.insert(arg_name.to_string()) {
-                bail!("susfile.tools.cli `{tool_name}` has duplicate argument `{arg_name}`");
+                bail!("sneekfile.tools.cli `{tool_name}` has duplicate argument `{arg_name}`");
             }
             if arg.description.trim().is_empty() {
                 bail!(
-                    "susfile.tools.cli `{tool_name}` argument `{arg_name}` requires a description"
+                    "sneekfile.tools.cli `{tool_name}` argument `{arg_name}` requires a description"
                 );
             }
             if !placeholders.contains(arg_name) {
                 bail!(
-                    "susfile.tools.cli `{tool_name}` command must include placeholder <{arg_name}>"
+                    "sneekfile.tools.cli `{tool_name}` command must include placeholder <{arg_name}>"
                 );
             }
         }
@@ -187,7 +187,7 @@ pub fn validate_susfile(cfg: &Susfile) -> Result<()> {
         for placeholder in placeholders {
             if !seen_args.contains(&placeholder) {
                 bail!(
-                    "susfile.tools.cli `{tool_name}` command placeholder <{placeholder}> has no matching args entry"
+                    "sneekfile.tools.cli `{tool_name}` command placeholder <{placeholder}> has no matching args entry"
                 );
             }
         }
@@ -217,8 +217,8 @@ fn extract_placeholders(command: &str) -> std::collections::HashSet<String> {
     out
 }
 
-pub fn default_susfile() -> Susfile {
-    Susfile {
+pub fn default_sneekfile() -> Sneekfile {
+    Sneekfile {
         api: "openai".to_string(),
         model: "gpt-4.1".to_string(),
         secs_between_tics: 30,
@@ -477,15 +477,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_susfile_has_cli_tools() {
-        let cfg = default_susfile();
-        validate_susfile(&cfg).expect("default config should validate");
+    fn default_sneekfile_has_cli_tools() {
+        let cfg = default_sneekfile();
+        validate_sneekfile(&cfg).expect("default config should validate");
         assert!(!cfg.tools.cli.is_empty());
     }
 
     #[test]
-    fn default_susfile_includes_expected_recon_tools() {
-        let cfg = default_susfile();
+    fn default_sneekfile_includes_expected_recon_tools() {
+        let cfg = default_sneekfile();
         let names: std::collections::HashSet<_> = cfg
             .tools
             .cli
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn load_defaults_max_strategists_per_time_when_missing() {
-        let cfg: Susfile = serde_json::from_str(
+        let cfg: Sneekfile = serde_json::from_str(
             r#"{
                 "api": "openai",
                 "model": "gpt-4.1",
@@ -540,18 +540,18 @@ mod tests {
 
     #[test]
     fn validation_fails_for_zero_max_strategists_per_time() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.max_strategists_per_time = 0;
 
-        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        let err = validate_sneekfile(&cfg).expect_err("expected validation error");
         assert!(err
             .to_string()
-            .contains("susfile.max_strategists_per_time must be > 0"));
+            .contains("sneekfile.max_strategists_per_time must be > 0"));
     }
 
     #[test]
     fn load_supports_legacy_allowed_ips_key() {
-        let cfg: Susfile = serde_json::from_str(
+        let cfg: Sneekfile = serde_json::from_str(
             r#"{
                 "api": "openai",
                 "model": "gpt-4.1",
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn validation_fails_when_placeholder_has_no_arg_mapping() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         let tool = cfg
             .tools
             .cli
@@ -585,24 +585,24 @@ mod tests {
             .find(|tool| tool.name == "nmap_targeted_scan")
             .expect("default config should include nmap_targeted_scan");
         tool.command = "nmap -A <target> <extra>".to_string();
-        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        let err = validate_sneekfile(&cfg).expect_err("expected validation error");
         assert!(err.to_string().contains("<extra>"));
     }
 
     #[test]
     fn validation_fails_for_invalid_allowed_host() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.allowed_hosts = vec!["bad host value".to_string()];
 
-        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        let err = validate_sneekfile(&cfg).expect_err("expected validation error");
         assert!(err
             .to_string()
-            .contains("susfile.allowed_hosts contains invalid host"));
+            .contains("sneekfile.allowed_hosts contains invalid host"));
     }
 
     #[test]
     fn validation_fails_for_empty_agent_prompt_path() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.agents = Some(AgentsConfig {
             analyst: Some(AgentPromptConfig {
                 prompt: "   ".to_string(),
@@ -611,15 +611,15 @@ mod tests {
             strategist: None,
         });
 
-        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        let err = validate_sneekfile(&cfg).expect_err("expected validation error");
         assert!(err
             .to_string()
-            .contains("susfile.agents.analyst.prompt must not be empty"));
+            .contains("sneekfile.agents.analyst.prompt must not be empty"));
     }
 
     #[test]
     fn load_defaults_secs_between_tics_when_missing() {
-        let cfg: Susfile = serde_json::from_str(
+        let cfg: Sneekfile = serde_json::from_str(
             r#"{
                 "api": "openai",
                 "model": "gpt-4.1",
@@ -644,12 +644,12 @@ mod tests {
 
     #[test]
     fn validation_fails_for_zero_secs_between_tics() {
-        let mut cfg = default_susfile();
+        let mut cfg = default_sneekfile();
         cfg.secs_between_tics = 0;
 
-        let err = validate_susfile(&cfg).expect_err("expected validation error");
+        let err = validate_sneekfile(&cfg).expect_err("expected validation error");
         assert!(err
             .to_string()
-            .contains("susfile.secs_between_tics must be > 0"));
+            .contains("sneekfile.secs_between_tics must be > 0"));
     }
 }
