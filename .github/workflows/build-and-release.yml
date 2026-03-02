@@ -29,14 +29,14 @@ jobs:
 
       - name: Package
         run: |
-          cp target/${{ env.TARGET }}/release/opensus opensus
-          tar -czf opensus-${{ env.TARGET }}.tar.gz opensus
+          cp target/${{ env.TARGET }}/release/deepsneek deepsneek
+          tar -czf deepsneek-${{ env.TARGET }}.tar.gz deepsneek
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: opensus-${{ env.TARGET }}
-          path: opensus-${{ env.TARGET }}.tar.gz
+          name: deepsneek-${{ env.TARGET }}
+          path: deepsneek-${{ env.TARGET }}.tar.gz
 
       - name: Release
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
@@ -47,4 +47,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           make_latest: true
-          files: opensus-aarch64-unknown-linux-gnu.tar.gz
+          files: deepsneek-aarch64-unknown-linux-gnu.tar.gz

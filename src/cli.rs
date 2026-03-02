@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "opensus")]
+#[command(name = "deepsneek")]
 #[command(about = "LLM pentest orchestration runtime")]
 pub struct Cli {
     #[command(subcommand)]
@@ -18,7 +18,7 @@ pub enum Commands {
     },
     /// Initialize workspace files and prompts.
     Init,
-    /// Reset runtime artifacts while keeping brief and susfile.
+    /// Reset runtime artifacts while keeping brief and sneekfile.
     Reset,
     /// Search local CVE database.
     Cve {

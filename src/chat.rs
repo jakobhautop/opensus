@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
 
-use crate::config::Susfile;
+use crate::config::Sneekfile;
 
-pub fn tools_for_agent(agent: &str, cfg: &Susfile, cve_tools_enabled: bool) -> Vec<Value> {
+pub fn tools_for_agent(agent: &str, cfg: &Sneekfile, cve_tools_enabled: bool) -> Vec<Value> {
     match agent {
         "dispatch_agent" => vec![
             tool_no_args("read_plan", "Read plan.md"),

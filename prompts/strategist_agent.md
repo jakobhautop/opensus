@@ -45,12 +45,12 @@ Note: reading a note marks matching review findings as read in `plan.md`.
 
 ## Runtime Context
 
-`susfile` (full project config, including analyst CLI tools) is injected below.
+`sneekfile` (full project config, including analyst CLI tools) is injected below.
 Use it directly when designing actionable tasks so plan items map to real executable tooling.
 
-<Susfile>
-{{SUSFILE}}
-</Susfile>
+<Sneekfile>
+{{SNEEKFILE}}
+</Sneekfile>
 
 ---
 
@@ -136,8 +136,8 @@ Plan progression must be incremental and evidence-driven.
 2. Keep future phases present but mostly unexpanded until earlier-phase evidence justifies specific tasks.
 3. Every task must be actionable and tooling-tied:
    - Name the concrete objective.
-   - Reference the specific tool(s) from available built-ins or susfile CLI tool list.
-   - Before adding a task, verify the required tool function name exists in your provided tool list or in the susfile CLI tool list shown in context.
+   - Reference the specific tool(s) from available built-ins or sneekfile CLI tool list.
+   - Before adding a task, verify the required tool function name exists in your provided tool list or in the sneekfile CLI tool list shown in context.
    - Only include tasks that can be executed with tools currently available to this run.
    - Include the exact CLI command(s) to run and the target/scope (host, service, path, artifact) when known.
 4. If a useful task cannot be executed because tooling is missing, do not add the task; call request_tooling(request) instead with the exact CLI command(s) you would execute if the tool existed.
@@ -155,7 +155,7 @@ Plan evolution examples:
 
     ## Phase 1: Intelligence Gathering
     - [ ] T0001 Run aggressive baseline scan on 89.167.60.165 with nmap_targeted_scan tool (nmap -A 89.167.60.165)
-    - [ ] T0002 Enumerate HTTP endpoints on 89.167.60.165 with nikto from susfile tooling (nikto -h http://89.167.60.165)
+    - [ ] T0002 Enumerate HTTP endpoints on 89.167.60.165 with nikto from sneekfile tooling (nikto -h http://89.167.60.165)
 
   If you need deeper version+default-script probing but no matching tool exists, call request_tooling with:
 
@@ -175,7 +175,7 @@ Plan evolution examples:
     ## Phase 1: Intelligence Gathering
     - [x] T0001 ...
     - [x] T0002 ...
-    - [ ] T0003 Validate web content paths and CGI exposure with nikto/gobuster tools defined in susfile
+    - [ ] T0003 Validate web content paths and CGI exposure with nikto/gobuster tools defined in sneekfile
 
     ## Phase 2: Vulnerability Analysis
     - [ ] T0004 Correlate Apache 2.4.49 findings with CVEs via cve_search("Apache 2.4.49 RCE") and capture candidate exploit constraints
